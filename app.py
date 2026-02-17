@@ -1,0 +1,1138 @@
+"""
+THz Spectroscopy Analysis Studio  v3.0
+Publication-quality · Bilingual UI (EN primary, ZH annotations)
+Science / Nature journal figure standards
+"""
+import io, warnings
+import numpy as np
+import pandas as pd
+import streamlit as st
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
+from matplotlib.backends.backend_pdf import PdfPages
+warnings.filterwarnings("ignore")
+
+from modules.data_loader    import DataLoader
+from modules.fano_fitter    import FanoFitter
+from modules.bcs_analyzer   import BCSAnalyzer
+from modules.dielectric_calc import DielectricCalculator
+from modules.science_plot   import (apply_nature_style, apply_plotly_style,
+                                    temp_cmap, format_ax, panel_label,
+                                    SINGLE_COL, DOUBLE_COL, TALL_DOUBLE, WONG7)
+
+apply_nature_style()
+
+# ══════════════════════════════════════════════════════════════
+# PAGE CONFIG & DESIGN SYSTEM
+# ══════════════════════════════════════════════════════════════
+st.set_page_config(
+    page_title="THz Analysis Studio",
+    page_icon="🔬",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+st.markdown("""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,600;1,400&family=DM+Mono:wght@400;500&display=swap');
+
+:root {
+  --ink:    #0d1117;
+  --steel:  #1c3557;
+  --ocean:  #1a5f8a;
+  --frost:  #e8f1f8;
+  --rule:   #c8d8e8;
+  --accent: #c0392b;
+  --gold:   #b5860d;
+  --bg:     #fafbfc;
+  --card:   #ffffff;
+}
+
+[data-testid="stAppViewContainer"] {
+  background: var(--bg);
+}
+[data-testid="stSidebar"] {
+  background: #f0f4f8;
+  border-right: 1px solid var(--rule);
+}
+
+/* ── masthead ── */
+.masthead {
+  border-top: 3px solid var(--steel);
+  border-bottom: 1px solid var(--rule);
+  padding: 18px 0 14px;
+  margin-bottom: 20px;
+  text-align: center;
+}
+.masthead-title {
+  font-family: 'EB Garamond', Georgia, serif;
+  font-size: 2.0rem;
+  font-weight: 600;
+  color: var(--steel);
+  letter-spacing: 0.5px;
+  margin: 0;
+}
+.masthead-sub {
+  font-family: 'DM Mono', monospace;
+  font-size: 0.72rem;
+  color: #5a7898;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  margin-top: 4px;
+}
+.masthead-zh {
+  font-size: 0.78rem;
+  color: #7a9ab8;
+  margin-top: 3px;
+  font-style: italic;
+}
+
+/* ── section header ── */
+.sec-head {
+  font-family: 'EB Garamond', serif;
+  font-size: 1.15rem;
+  font-weight: 600;
+  color: var(--steel);
+  border-bottom: 1px solid var(--rule);
+  padding-bottom: 4px;
+  margin: 18px 0 10px;
+}
+
+/* ── KPI cards ── */
+.kpi-row { display: flex; gap: 14px; margin-bottom: 18px; }
+.kpi {
+  flex: 1;
+  background: var(--card);
+  border: 1px solid var(--rule);
+  border-top: 3px solid var(--ocean);
+  border-radius: 4px;
+  padding: 12px 16px 10px;
+}
+.kpi-val  { font-family:'DM Mono',monospace; font-size:1.55rem;
+            color:var(--steel); font-weight:500; }
+.kpi-lbl  { font-size:0.73rem; color:#6a8aaa; text-transform:uppercase;
+            letter-spacing:0.8px; margin-top:2px; }
+.kpi-zh   { font-size:0.68rem; color:#9ab0c4; }
+
+/* ── info chips ── */
+.chip {
+  display:inline-block;
+  background: var(--frost);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  font-family:'DM Mono',monospace;
+  font-size:0.72rem;
+  color: var(--ocean);
+  padding: 2px 8px;
+  margin: 2px 3px;
+}
+
+/* ── annotation style ── */
+.zh-note {
+  font-size: 0.75rem;
+  color: #7a9ab8;
+  font-style: italic;
+  border-left: 2px solid var(--rule);
+  padding-left: 8px;
+  margin: 4px 0 10px;
+}
+
+/* ── result table ── */
+.result-good { background-color: #eaf7ee !important; }
+.result-warn { background-color: #fff7e6 !important; }
+.result-bad  { background-color: #fdecea !important; }
+
+/* ── tab styling ── */
+button[data-baseweb="tab"] {
+  font-family: 'DM Mono', monospace !important;
+  font-size: 0.75rem !important;
+  letter-spacing: 0.5px !important;
+}
+
+/* ── sidebar labels ── */
+.sidebar-section {
+  font-family:'DM Mono',monospace;
+  font-size:0.7rem;
+  text-transform:uppercase;
+  letter-spacing:1px;
+  color:#5a7898;
+  margin: 14px 0 6px;
+}
+</style>
+""", unsafe_allow_html=True)
+
+# ══════════════════════════════════════════════════════════════
+# SESSION STATE
+# ══════════════════════════════════════════════════════════════
+_defaults = dict(files=[], results={}, df=None, step=1,
+                 diel=[], roi=(0.8,1.3), fitted_tc="—")
+for k,v in _defaults.items():
+    if k not in st.session_state:
+        st.session_state[k] = v
+
+# ══════════════════════════════════════════════════════════════
+# HELPERS
+# ══════════════════════════════════════════════════════════════
+def plotly_fig(height=400, title=""):
+    fig = go.Figure()
+    apply_plotly_style(fig, height=height, title=title)
+    return fig
+
+def get_colors(n):
+    return temp_cmap(n)
+
+def zh(text):
+    st.markdown(f'<div class="zh-note">{text}</div>', unsafe_allow_html=True)
+
+def sec(text, zh_text=""):
+    st.markdown(f'<div class="sec-head">{text}</div>', unsafe_allow_html=True)
+    if zh_text:
+        zh(zh_text)
+
+# ══════════════════════════════════════════════════════════════
+# SIDEBAR
+# ══════════════════════════════════════════════════════════════
+with st.sidebar:
+    st.markdown('<div class="sidebar-section">📁 Data Input · 数据输入</div>',
+                unsafe_allow_html=True)
+    uploaded = st.file_uploader(
+        "Upload THz data files (.txt)",
+        type=["txt"], accept_multiple_files=True,
+        help="Filename or header must contain temperature, e.g. '300K'\n"
+             "文件名或表头需含温度，如 300K")
+
+    st.markdown('<div class="sidebar-section">⚙️ Processing · 处理参数</div>',
+                unsafe_allow_html=True)
+    smooth_w = st.slider("Smoothing window 平滑窗口", 1, 15, 5, 2)
+    rm_bad   = st.checkbox("Remove outliers 去除坏点", True)
+
+    st.markdown('<div class="sidebar-section">📈 BCS Fitting · BCS拟合</div>',
+                unsafe_allow_html=True)
+    tc_mode = st.radio("T_c mode  临界温度模式",
+                       ["Auto-optimize 自动", "Fixed 手动固定"])
+    tc_fixed = None
+    if "Fixed" in tc_mode:
+        tc_fixed = st.slider("T_c (K)", 280.0, 380.0, 328.0, 0.5)
+
+    st.markdown('<div class="sidebar-section">⚡ Dielectric · 介电函数</div>',
+                unsafe_allow_html=True)
+    diel_on = st.checkbox("Enable dielectric calculation 启用介电计算")
+    ref_name  = None
+    thickness = 0.5
+    if diel_on and st.session_state.files:
+        fnames   = [d['filename'] for d in st.session_state.files]
+        ref_name = st.selectbox("Reference file 参考文件", fnames)
+        thickness= st.number_input("Sample thickness (mm) 样品厚度",
+                                   0.01, 20.0, 0.5, 0.01)
+
+    st.markdown('<div class="sidebar-section">🖼️ Figure Export · 图片导出</div>',
+                unsafe_allow_html=True)
+    export_dpi = st.selectbox("Export DPI", [150, 300, 600], index=1)
+    export_fmt = st.selectbox("Format 格式", ["pdf", "png", "svg"], index=0)
+
+    st.divider()
+    if st.button("↺  Reset all · 重置", use_container_width=True):
+        for k in list(st.session_state.keys()):
+            del st.session_state[k]
+        st.rerun()
+
+# ══════════════════════════════════════════════════════════════
+# MASTHEAD
+# ══════════════════════════════════════════════════════════════
+st.markdown("""
+<div class="masthead">
+  <div class="masthead-title">THz Spectroscopy Analysis Studio</div>
+  <div class="masthead-sub">Temperature-Dependent Phonon Mode Analysis · Fano Resonance · BCS Order Parameter</div>
+  <div class="masthead-zh">太赫兹光谱分析工作站 · 声子模式 · Fano共振 · BCS序参量</div>
+</div>
+""", unsafe_allow_html=True)
+
+# ══════════════════════════════════════════════════════════════
+# FILE LOADING
+# ══════════════════════════════════════════════════════════════
+if uploaded:
+    need_reload = (not st.session_state.files or
+                   {f.name for f in uploaded} !=
+                   {d['filename'] for d in st.session_state.files})
+    if need_reload:
+        loader = DataLoader()
+        files, errs = [], []
+        for uf in uploaded:
+            try:
+                files.append(loader.load_file(uf))
+            except Exception as e:
+                errs.append(f"{uf.name}: {e}")
+        files.sort(key=lambda x: x['temperature'])
+        st.session_state.files = files
+        st.session_state.results = {}
+        st.session_state.df = None
+        if st.session_state.step == 1:
+            st.session_state.step = 2
+        for e in errs:
+            st.warning(f"⚠️ {e}")
+
+# ── KPI bar ──────────────────────────────────────────────────
+if st.session_state.files:
+    files = st.session_state.files
+    temps = [d['temperature'] for d in files]
+    n_ok  = len([r for r in st.session_state.results.values() if r])
+    tc_str= st.session_state.fitted_tc
+
+    st.markdown(f"""
+    <div class="kpi-row">
+      <div class="kpi">
+        <div class="kpi-val">{len(files)}</div>
+        <div class="kpi-lbl">Files Loaded</div>
+        <div class="kpi-zh">已加载文件数</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-val">{min(temps):.0f} – {max(temps):.0f} K</div>
+        <div class="kpi-lbl">Temperature Range</div>
+        <div class="kpi-zh">温度范围</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-val">{n_ok} / {len(files)}</div>
+        <div class="kpi-lbl">Fits Completed</div>
+        <div class="kpi-zh">拟合完成数</div>
+      </div>
+      <div class="kpi">
+        <div class="kpi-val">{tc_str}</div>
+        <div class="kpi-lbl">Critical Temp T_c</div>
+        <div class="kpi-zh">临界温度</div>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
+else:
+    st.info("⬅️  Upload THz data files in the sidebar to begin.  "
+            "（请在左侧上传 .txt 数据文件）")
+    st.stop()
+
+# ══════════════════════════════════════════════════════════════
+# TABS
+# ══════════════════════════════════════════════════════════════
+
+def _single_fig_export(r, w, h, dpi, fmt):
+    apply_nature_style()
+    fig, ax = plt.subplots(figsize=(w, h))
+    fx, sig, fit_s = r['freq_roi'], r['signal'], r['fitted_signal']
+    ax.fill_between(fx, 0, sig, color='#2c6ea5', alpha=0.12)
+    ax.plot(fx, sig,   color='#1a5f8a', lw=1.4, label='Signal')
+    ax.plot(fx, fit_s, color='#c0392b', lw=1.4, ls='--', label='Fano fit')
+    ax.vlines(r['peak_x'], 0, r['Linear_Depth'],
+              colors='#27ae60', lw=1.0, ls=':')
+    ax.hlines(r['half_height'], r['left_x'], r['right_x'],
+              colors='#8e44ad', lw=1.0)
+    ax.set_xlabel('Frequency (THz)')
+    ax.set_ylabel('ΔAmplitude (arb. u.)')
+    ax.set_title(f"T = {r['Temperature_K']:.0f} K", pad=5, fontsize=8)
+    ax.set_ylim(bottom=0)
+    ax.legend(frameon=True)
+    format_ax(ax); panel_label(ax, 'a')
+    plt.tight_layout(pad=0.4)
+    buf = io.BytesIO()
+    fig.savefig(buf, format=fmt, dpi=dpi, bbox_inches='tight')
+    plt.close(fig)
+    buf.seek(0)
+    return buf.read()
+
+
+def _make_excel(df, diel_rs):
+    buf = io.BytesIO()
+    drop = ['freq_roi','signal','fitted_signal',
+            'half_height','left_x','right_x','peak_x']
+    df_out = (df.drop(columns=drop, errors='ignore')
+                .sort_values('Temperature_K'))
+    with pd.ExcelWriter(buf, engine='openpyxl') as xw:
+        df_out.to_excel(xw, sheet_name='Fano_Parameters', index=False)
+        if diel_rs:
+            rows = []
+            for res in diel_rs:
+                for j in range(len(res['freq'])):
+                    rows.append({'T (K)': res['temp'],
+                                 'Freq (THz)': res['freq'][j],
+                                 'n': res['n'][j], 'k': res['k'][j],
+                                 'eps1': res['e1'][j],
+                                 'eps2': res['e2'][j]})
+            pd.DataFrame(rows).to_excel(
+                xw, sheet_name='Dielectric_Functions', index=False)
+    buf.seek(0)
+    return buf.getvalue()
+
+
+def _make_pdf_report(df, results, tc_fixed_val, dpi):
+    apply_nature_style()
+    bcs = BCSAnalyzer(tc_fixed=tc_fixed_val)
+    df  = df.sort_values('Temperature_K')
+    T   = df['Temperature_K'].values.astype(float)
+    T_s = np.linspace(T.min()*0.82, max(T.max()+15,360), 500)
+    buf = io.BytesIO()
+
+    with PdfPages(buf) as pdf:
+        # ── page 1: BCS fits ────────────────────────────────────────────
+        fig, axes = plt.subplots(1, 2, figsize=DOUBLE_COL)
+        for ax, col, lbl, color in [
+            (axes[0],'Linear_Depth','Peak Depth (arb. u.)','#1a5f8a'),
+            (axes[1],'Area',        'Integrated Area (arb. u.·THz)','#27ae60'),
+        ]:
+            y = df[col].values.astype(float)
+            ax.scatter(T, y, s=22, color=color,
+                       edgecolors='#111', linewidths=0.6, zorder=5)
+            p = bcs.fit(T, y)
+            if p:
+                ax.plot(T_s, bcs.bcs(T_s,*p),
+                        color='#c0392b', lw=1.4,
+                        label=f'BCS  $T_c$={p[1]:.1f} K  $\\beta$={p[2]:.2f}')
+                ax.axvline(p[1], color='#888', ls='--', lw=0.8)
+            ax.set_xlabel('Temperature (K)')
+            ax.set_ylabel(lbl)
+            ax.set_ylim(bottom=0)
+            ax.legend(fontsize=6.5)
+            format_ax(ax)
+        panel_label(axes[0],'a'); panel_label(axes[1],'b')
+        plt.suptitle('BCS Order Parameter Fitting', fontsize=9,
+                     fontweight='bold', y=1.01)
+        plt.tight_layout(pad=0.5)
+        pdf.savefig(fig, dpi=dpi, bbox_inches='tight'); plt.close()
+
+        # ── page 2: freq + FWHM ─────────────────────────────────────────
+        fig, axes = plt.subplots(1, 2, figsize=DOUBLE_COL)
+        for ax, col, ylab, col2 in [
+            (axes[0],'Peak_Freq_THz','Phonon Frequency (THz)','#b5860d'),
+            (axes[1],'FWHM_THz',    'FWHM (THz)','#8e44ad'),
+        ]:
+            ax.plot(T, df[col].values, 'o--', color=col2,
+                    ms=3.5, lw=0.9, mec='#111', mew=0.5)
+            ax.set_xlabel('Temperature (K)')
+            ax.set_ylabel(ylab)
+            ax.set_ylim(bottom=0)
+            format_ax(ax)
+        panel_label(axes[0],'c'); panel_label(axes[1],'d')
+        plt.suptitle('Phonon Frequency and Linewidth', fontsize=9,
+                     fontweight='bold', y=1.01)
+        plt.tight_layout(pad=0.5)
+        pdf.savefig(fig, dpi=dpi, bbox_inches='tight'); plt.close()
+
+        # ── page 3+: waterfall ──────────────────────────────────────────
+        ok_items = sorted(
+            [(k,v) for k,v in results.items() if v],
+            key=lambda x: x[1]['Temperature_K'])
+        n_c  = len(ok_items)
+        cols_wf = temp_cmap(n_c)
+        peak_hs = [v['Linear_Depth'] for _,v in ok_items]
+        off_stp = float(np.median(peak_hs))*1.8 if peak_hs else 1.0
+
+        fig, ax = plt.subplots(figsize=(3.5, max(4.0, n_c*0.22)))
+        for i,(_, r) in enumerate(ok_items):
+            fx = r['freq_roi']
+            sy = r['signal']
+            m  = (fx>=0.60)&(fx<=1.60)
+            if not m.any(): continue
+            off = i*off_stp
+            c   = cols_wf[i]
+            ax.plot(fx[m], sy[m]+off, color=c, lw=0.9)
+            if i%(max(1,n_c//10))==0:
+                ax.text(1.61, float(sy[m][-1])+off if m.any() else off,
+                        f'{r["Temperature_K"]:.0f} K',
+                        fontsize=5.5, color=c, va='center')
+        ax.set_xlabel('Frequency (THz)')
+        ax.set_ylabel('Intensity (arb. u., offset)')
+        ax.set_xlim(0.60, 1.75)
+        ax.set_yticks([])
+        ax.set_title('Temperature Evolution of Phonon Mode',
+                     fontsize=8, pad=5)
+        format_ax(ax, minor=False)
+        panel_label(ax,'e')
+        plt.tight_layout(pad=0.4)
+        pdf.savefig(fig, dpi=dpi, bbox_inches='tight'); plt.close()
+
+        # ── page 4+: individual fits ────────────────────────────────────
+        step_sel = max(1, n_c//12)
+        sel_fits = ok_items[::step_sel][:12]
+        n_sub    = len(sel_fits)
+        ncols    = 3; nrows = (n_sub+ncols-1)//ncols
+        fig, axes = plt.subplots(nrows, ncols,
+                                 figsize=(7.0, nrows*2.4))
+        axes = axes.flatten()
+        for i,(_,r) in enumerate(sel_fits):
+            ax = axes[i]
+            ax.fill_between(r['freq_roi'],0,r['signal'],
+                            color='#2c6ea5',alpha=0.12)
+            ax.plot(r['freq_roi'],r['signal'],
+                    color='#1a5f8a',lw=1.0,label='Signal')
+            ax.plot(r['freq_roi'],r['fitted_signal'],
+                    color='#c0392b',lw=1.0,ls='--',label='Fano fit')
+            ax.vlines(r['peak_x'],0,r['Linear_Depth'],
+                      colors='#27ae60',lw=0.9,ls=':')
+            ax.hlines(r['half_height'],r['left_x'],r['right_x'],
+                      colors='#8e44ad',lw=0.9)
+            ax.set_title(f"{r['Temperature_K']:.0f} K  "
+                         f"R²={r['R_squared']:.3f}",
+                         fontsize=7, pad=3)
+            ax.set_ylim(bottom=0)
+            ax.set_xlabel('Frequency (THz)', fontsize=6)
+            ax.set_ylabel('ΔAmpl. (arb. u.)', fontsize=6)
+            format_ax(ax)
+        for j in range(i+1, len(axes)):
+            axes[j].axis('off')
+        plt.suptitle('Representative Fano Fits', fontsize=9,
+                     fontweight='bold', y=1.01)
+        plt.tight_layout(pad=0.4)
+        pdf.savefig(fig, dpi=dpi, bbox_inches='tight'); plt.close()
+
+        d = pdf.infodict()
+        d['Title']   = 'THz Spectroscopy Analysis Report'
+        d['Author']  = 'THz Analysis Studio v3.0'
+        d['Subject'] = 'Fano resonance & BCS order parameter'
+
+    buf.seek(0)
+    return buf.read()
+
+
+def _export_all_figs(results, dpi):
+    apply_nature_style()
+    buf = io.BytesIO()
+    ok_items = sorted(
+        [(k,v) for k,v in results.items() if v],
+        key=lambda x: x[1]['Temperature_K'])
+
+    with PdfPages(buf) as pdf:
+        for _, r in ok_items:
+            fig, ax = plt.subplots(figsize=SINGLE_COL)
+            ax.fill_between(r['freq_roi'],0,r['signal'],
+                            color='#2c6ea5',alpha=0.12)
+            ax.plot(r['freq_roi'],r['signal'],
+                    color='#1a5f8a',lw=1.4,label='Signal')
+            ax.plot(r['freq_roi'],r['fitted_signal'],
+                    color='#c0392b',lw=1.4,ls='--',label='Fano fit')
+            ax.vlines(r['peak_x'],0,r['Linear_Depth'],
+                      colors='#27ae60',lw=1.1,ls=':')
+            ax.hlines(r['half_height'],r['left_x'],r['right_x'],
+                      colors='#8e44ad',lw=1.1)
+            ax.set_xlabel('Frequency (THz)')
+            ax.set_ylabel('ΔAmplitude (arb. u.)')
+            ax.set_title(f"T = {r['Temperature_K']:.0f} K  ·  "
+                         f"$f_r$ = {r['Peak_Freq_THz']:.4f} THz  ·  "
+                         f"R² = {r['R_squared']:.4f}",
+                         fontsize=7, pad=4)
+            ax.set_ylim(bottom=0)
+            ax.legend(fontsize=6.5)
+            format_ax(ax)
+            plt.tight_layout(pad=0.4)
+            pdf.savefig(fig, dpi=dpi, bbox_inches='tight')
+            plt.close(fig)
+
+    buf.seek(0)
+    return buf.read()
+
+
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    "① ROI & Fitting",
+    "② BCS Analysis",
+    "③ Waterfall",
+    "④ Dielectric",
+    "⑤ Peak Detail",
+    "⑥ Export",
+])
+
+files = st.session_state.files
+
+# ─────────────────────────────────────────────────
+# TAB 1 — ROI & Fano fitting
+# ─────────────────────────────────────────────────
+with tab1:
+    sec("File Overview", "文件列表与频率范围")
+    tbl = pd.DataFrame([{
+        "Filename": d['filename'],
+        "T (K)":    d['temperature'],
+        "f range (THz)": (f"{d['freq'].min():.3f} – {d['freq'].max():.3f}"
+                          if len(d['freq']) else "—"),
+        "Points":   len(d['freq']),
+    } for d in files])
+    st.dataframe(tbl, use_container_width=True, height=170,
+                 hide_index=True)
+
+    st.divider()
+    sec("ROI Selection", "感兴趣区域选择（将统一应用到所有文件）")
+
+    col_ctrl, col_plot = st.columns([1, 3])
+    with col_ctrl:
+        idx = st.selectbox("Preview file  预览文件",
+            range(len(files)),
+            format_func=lambda i:
+                f"{files[i]['filename']} ({files[i]['temperature']:.0f} K)")
+        sel = files[idx]
+        fa  = sel['freq'].astype(float)
+        aa  = sel['amp'].astype(float)
+        flo, fhi = float(fa.min()), float(fa.max())
+
+        roi_l = st.slider("Left boundary (THz)  左边界",
+                          flo, fhi, float(np.clip(0.80,flo,fhi)), 0.005)
+        roi_r = st.slider("Right boundary (THz)  右边界",
+                          flo, fhi, float(np.clip(1.30,flo,fhi)), 0.005)
+        if roi_l >= roi_r:
+            st.error("Left boundary must be < right boundary")
+        st.session_state.roi = (roi_l, roi_r)
+
+        do_fit = st.button("▶  Run batch Fano fitting\n批量拟合",
+                           type="primary", use_container_width=True)
+
+    with col_plot:
+        fig = plotly_fig(320, f"{sel['filename']}  ·  {sel['temperature']:.0f} K")
+        fig.add_trace(go.Scatter(x=fa, y=aa, mode='lines',
+            name='Spectrum', line=dict(color='#334466', width=1.2)))
+        mask = (fa >= roi_l) & (fa <= roi_r)
+        fig.add_trace(go.Scatter(x=fa[mask], y=aa[mask], mode='lines',
+            name='ROI', line=dict(color='#c0392b', width=2.2)))
+        fig.add_vrect(x0=roi_l, x1=roi_r, fillcolor="#c0392b",
+                      opacity=0.07, line_width=0)
+        fig.update_xaxes(title_text="Frequency (THz)")
+        fig.update_yaxes(title_text="Amplitude (a.u.)")
+        st.plotly_chart(fig, use_container_width=True)
+
+    # ── batch fitting ──────────────────────────────
+    if do_fit:
+        fitter = FanoFitter(smooth_window=smooth_w, remove_outliers=rm_bad)
+        roi    = st.session_state.roi
+        prog   = st.progress(0)
+        stat   = st.empty()
+        results= {}
+        for i, d in enumerate(files):
+            stat.text(f"Fitting {d['filename']}  ({i+1}/{len(files)}) …")
+            try:
+                r = fitter.fit(d['freq'].astype(float),
+                               d['amp'].astype(float),
+                               roi, d['temperature'], d['filename'])
+                results[d['filename']] = r
+            except Exception as e:
+                st.warning(f"⚠️ {d['filename']}: {e}")
+                results[d['filename']] = None
+            prog.progress((i+1)/len(files))
+        st.session_state.results = results
+        ok = [r for r in results.values() if r]
+        st.session_state.df = pd.DataFrame(ok) if ok else None
+        st.session_state.step = 3
+        prog.empty(); stat.empty()
+        st.success(f"✅ Fitting complete · 拟合完成  —  "
+                   f"{len(ok)}/{len(files)} successful")
+        st.rerun()
+
+    # ── results table ──────────────────────────────
+    if st.session_state.df is not None:
+        st.divider()
+        sec("Fitting Results", "拟合结果汇总 · 绿色 R²>0.97 · 红色 R²<0.90")
+        cols_show = ['Temperature_K','Peak_Freq_THz','Depth_dB',
+                     'Linear_Depth','FWHM_THz','Area','R_squared']
+        df_s = (st.session_state.df[cols_show]
+                .sort_values('Temperature_K')
+                .rename(columns={
+                    'Temperature_K':'T (K)',
+                    'Peak_Freq_THz':'f_r (THz)',
+                    'Depth_dB':'h (dB)',
+                    'Linear_Depth':'Depth (a.u.)',
+                    'FWHM_THz':'FWHM (THz)',
+                    'Area':'Area (a.u.·THz)',
+                    'R_squared':'R²',
+                }))
+
+        def _r2_style(val):
+            if val > 0.97: return 'background-color:#d4edda;color:#155724'
+            if val < 0.90: return 'background-color:#f8d7da;color:#721c24'
+            return 'background-color:#fff3cd;color:#856404'
+
+        styled = (df_s.style
+                  .map(_r2_style, subset=['R²'])
+                  .format({'T (K)':'{:.1f}','f_r (THz)':'{:.4f}',
+                           'h (dB)':'{:.2f}','Depth (a.u.)':'{:.4f}',
+                           'FWHM (THz)':'{:.4f}','Area (a.u.·THz)':'{:.5f}',
+                           'R²':'{:.4f}'}))
+        st.dataframe(styled, use_container_width=True, height=300,
+                     hide_index=True)
+
+        # ── quick trend row ────────────────────────
+        df   = st.session_state.df.sort_values('Temperature_K')
+        T    = df['Temperature_K'].values.astype(float)
+        c1,c2,c3 = st.columns(3)
+        for container, ycol, ylab, color in [
+            (c1,'Peak_Freq_THz','f_r (THz)','#1a5f8a'),
+            (c2,'Linear_Depth', 'Depth (a.u.)','#c0392b'),
+            (c3,'FWHM_THz',     'FWHM (THz)','#27ae60'),
+        ]:
+            f2 = plotly_fig(230, ylab)
+            f2.add_trace(go.Scatter(x=T, y=df[ycol].values,
+                mode='markers+lines',
+                marker=dict(size=6, color=color,
+                            line=dict(width=1, color='#111')),
+                line=dict(color=color, width=1.0, dash='dot')))
+            f2.update_xaxes(title_text='Temperature (K)')
+            f2.update_yaxes(title_text=ylab)
+            container.plotly_chart(f2, use_container_width=True)
+
+# ─────────────────────────────────────────────────
+# TAB 2 — BCS analysis
+# ─────────────────────────────────────────────────
+with tab2:
+    if st.session_state.df is None:
+        st.info("Complete Fano fitting in Tab ① first.  请先在 ① 完成拟合。")
+        st.stop()
+
+    sec("BCS Order Parameter Fitting",
+        "BCS序参量温度依赖拟合 · Δ(T) = A·tanh(β√(Tc/T−1))")
+    zh("公式来源：BCS超导理论类比，广泛用于CDW/激子绝缘体相变表征")
+
+    df  = st.session_state.df.sort_values('Temperature_K')
+    bcs = BCSAnalyzer(tc_fixed=tc_fixed)
+    T   = df['Temperature_K'].values.astype(float)
+    T_s = np.linspace(T.min()*0.82, max(T.max()+15, 360), 600)
+    colors_bcs = ['#1a5f8a','#27ae60']
+
+    def bcs_panel(y, ylab, color, key):
+        params = bcs.fit(T, y)
+        fig = plotly_fig(380, f'{ylab} vs Temperature')
+        fig.add_trace(go.Scatter(x=T, y=y, mode='markers',
+            name='Experimental data',
+            marker=dict(size=8, color=color,
+                        line=dict(width=1.2, color='#111'),
+                        symbol='circle')))
+        if params:
+            A, Tc, beta = params
+            ys = bcs.bcs(T_s, A, Tc, beta)
+            fig.add_trace(go.Scatter(x=T_s, y=ys,
+                mode='lines', name=f'BCS fit  T_c={Tc:.1f} K  β={beta:.2f}',
+                line=dict(color='#c0392b', width=2.2)))
+            fig.add_vline(x=Tc, line_dash='dash', line_color='#888',
+                          line_width=1.0,
+                          annotation_text=f'T_c = {Tc:.1f} K',
+                          annotation_position='top right',
+                          annotation_font_size=11)
+            st.session_state.fitted_tc = f"{Tc:.1f} K"
+        fig.update_xaxes(title_text='Temperature (K)')
+        fig.update_yaxes(title_text=ylab, rangemode='tozero')
+        fig.update_layout(legend=dict(x=0.02,y=0.98))
+        return fig, params
+
+    col_a, col_b = st.columns(2)
+    with col_a:
+        fa, pa = bcs_panel(df['Linear_Depth'].values.astype(float),
+                           'Peak Depth (a.u.)', colors_bcs[0], 'd')
+        st.plotly_chart(fa, use_container_width=True)
+        if pa:
+            st.markdown(
+                f'<span class="chip">T_c = {pa[1]:.2f} K</span>'
+                f'<span class="chip">β = {pa[2]:.3f}</span>'
+                f'<span class="chip">A = {pa[0]:.4f}</span>',
+                unsafe_allow_html=True)
+            zh("深度拟合：峰谷与基线之差，直接体现序参量大小")
+
+    with col_b:
+        fb, pb = bcs_panel(df['Area'].values.astype(float),
+                           'Integrated Area (a.u.·THz)', colors_bcs[1], 'a')
+        st.plotly_chart(fb, use_container_width=True)
+        if pb:
+            st.markdown(
+                f'<span class="chip">T_c = {pb[1]:.2f} K</span>'
+                f'<span class="chip">β = {pb[2]:.3f}</span>',
+                unsafe_allow_html=True)
+            zh("面积拟合：积分振子强度，对噪声更鲁棒")
+
+    st.divider()
+    sec("Phonon Frequency & Linewidth", "声子频率软化与线宽展宽")
+    col_c, col_d = st.columns(2)
+    with col_c:
+        fc = plotly_fig(320, 'Phonon Frequency vs Temperature')
+        fc.add_trace(go.Scatter(x=T,
+            y=df['Peak_Freq_THz'].values.astype(float),
+            mode='markers+lines',
+            marker=dict(size=7, color='#b5860d',
+                        line=dict(width=1.2,color='#111')),
+            line=dict(color='#b5860d', width=1.0, dash='dot'),
+            name='f_r'))
+        fc.update_xaxes(title_text='Temperature (K)')
+        fc.update_yaxes(title_text='Frequency (THz)')
+        st.plotly_chart(fc, use_container_width=True)
+        zh("声子软化/硬化反映晶格动力学随相变的演化")
+    with col_d:
+        fd = plotly_fig(320, 'Phonon Linewidth (FWHM) vs Temperature')
+        fd.add_trace(go.Scatter(x=T,
+            y=df['FWHM_THz'].values.astype(float),
+            mode='markers+lines',
+            marker=dict(size=7, color='#8e44ad',
+                        line=dict(width=1.2,color='#111')),
+            line=dict(color='#8e44ad', width=1.0, dash='dot'),
+            name='FWHM'))
+        fd.update_xaxes(title_text='Temperature (K)')
+        fd.update_yaxes(title_text='FWHM (THz)', rangemode='tozero')
+        st.plotly_chart(fd, use_container_width=True)
+        zh("线宽展宽反映声子寿命缩短，与散射率增大相关")
+
+# ─────────────────────────────────────────────────
+# TAB 3 — Waterfall
+# ─────────────────────────────────────────────────
+with tab3:
+    if not st.session_state.results:
+        st.info("Complete Fano fitting in Tab ① first.  请先在 ① 完成拟合。")
+        st.stop()
+
+    sec("Temperature-Dependent Spectra (Waterfall)",
+        "温度演化瀑布图 · 偏移量 = 峰高 × offset系数")
+
+    ctl1, ctl2, ctl3 = st.columns(3)
+    with ctl1:
+        offset_mult = st.slider("Vertical offset  纵向偏移系数",
+                                0.5, 5.0, 1.8, 0.1)
+        x_lo = st.number_input("x min (THz)", value=0.60, step=0.05)
+        x_hi = st.number_input("x max (THz)", value=1.60, step=0.05)
+    with ctl2:
+        show_fit_wf = st.checkbox("Overlay Fano fit  叠加拟合曲线", False)
+        n_label     = st.slider("Label every N curves  每N条标温度",
+                                1, 5, 2)
+    with ctl3:
+        wf_height   = st.slider("Plot height (px)  图高", 400, 1000, 650, 50)
+
+    ok_items = sorted(
+        [(k,v) for k,v in st.session_state.results.items() if v],
+        key=lambda x: x[1]['Temperature_K'])
+    n_curves = len(ok_items)
+    colors_wf = temp_cmap(n_curves)
+
+    # auto offset from data
+    peak_hs = [v['Linear_Depth'] for _,v in ok_items]
+    med_h   = float(np.median(peak_hs)) if peak_hs else 1.0
+    offset_step = med_h * offset_mult
+
+    fig_wf = plotly_fig(wf_height,
+        'Temperature Evolution of Phonon Mode')
+    for i, (fname, r) in enumerate(ok_items):
+        freq_r = r['freq_roi']
+        sig    = r['signal']
+        mask   = (freq_r >= x_lo) & (freq_r <= x_hi)
+        fx, sy = freq_r[mask], sig[mask]
+        if len(fx) == 0: continue
+        offset = i * offset_step
+        col    = colors_wf[i]
+        temp   = r['Temperature_K']
+
+        fig_wf.add_trace(go.Scatter(
+            x=fx, y=sy+offset, mode='lines',
+            line=dict(color=col, width=1.5),
+            name=f'{temp:.0f} K',
+            hovertemplate=(f'<b>{temp:.0f} K</b><br>'
+                           f'f = %{{x:.3f}} THz<br>'
+                           f'I = %{{y:.4f}}<extra></extra>')))
+
+        if show_fit_wf:
+            fit_s = r['fitted_signal'][mask]
+            fig_wf.add_trace(go.Scatter(
+                x=fx, y=fit_s+offset, mode='lines',
+                line=dict(color=col, width=1.0, dash='dash'),
+                showlegend=False, hoverinfo='skip'))
+
+        if i % n_label == 0:
+            fig_wf.add_annotation(
+                x=x_hi+0.01, y=float(sy[-1])+offset if len(sy) else offset,
+                xanchor='left', showarrow=False,
+                text=f'<b>{temp:.0f} K</b>',
+                font=dict(size=9.5, color=col))
+
+    fig_wf.update_xaxes(title_text='Frequency (THz)',
+                        range=[x_lo, x_hi+0.14])
+    fig_wf.update_yaxes(title_text='Intensity (arb. u., offset)',
+                        showticklabels=False)
+    fig_wf.update_layout(showlegend=False)
+    st.plotly_chart(fig_wf, use_container_width=True)
+    zh("颜色：蓝色→低温，红色→高温。偏移量自动以中位峰高为基准，避免曲线重叠。")
+
+# ─────────────────────────────────────────────────
+# TAB 4 — Dielectric
+# ─────────────────────────────────────────────────
+with tab4:
+    if not diel_on:
+        st.info("Enable **Dielectric calculation** in the sidebar.  "
+                "请在左侧勾选启用介电计算。")
+        st.stop()
+
+    ref_data = next((d for d in files if d['filename']==ref_name), None)
+    if ref_data is None or len(ref_data.get('time',[]))==0:
+        st.error("Reference file has no time-domain data.  "
+                 "参考文件无时域数据，请检查格式。")
+        st.stop()
+
+    sec("Optical Constants & Dielectric Functions",
+        "光学常数与复介电函数 · n, k, ε₁, ε₂")
+    zh("方法：频域传输函数法 H(ω)=S_sam/S_ref → n(ω) → k(ω) → ε(ω)=ε₁+iε₂")
+
+    with st.spinner("Computing dielectric functions …  计算中 …"):
+        calc    = DielectricCalculator(thickness=thickness)
+        diel_rs = calc.calculate_all(ref_data, files)
+
+    if not diel_rs:
+        st.error("Calculation failed. Check reference file.  计算失败，请检查参考文件。")
+        st.stop()
+
+    st.session_state.diel = diel_rs
+    diel_rs.sort(key=lambda x: x['temp'])
+    nd = len(diel_rs)
+    step_d = max(1, nd//12)
+    subset = diel_rs[::step_d]
+    colors_d = temp_cmap(len(subset))
+
+    f_lo_d, f_hi_d = st.slider("Frequency range (THz)  频率范围",
+                                0.3, 4.0, (0.5, 2.8), 0.05)
+
+    fig_d = make_subplots(rows=2, cols=2, horizontal_spacing=0.12,
+                          vertical_spacing=0.14,
+                          subplot_titles=['Refractive index  n',
+                                          'Extinction coefficient  k',
+                                          'Real permittivity  ε₁',
+                                          'Imaginary permittivity  ε₂'])
+    for i,(res,col) in enumerate(zip(subset, colors_d)):
+        m  = (res['freq']>=f_lo_d) & (res['freq']<=f_hi_d)
+        sl = (i==0 or i==len(subset)-1)
+        kw = dict(mode='lines', line=dict(color=col,width=1.3),
+                  name=f"{res['temp']:.0f} K", legendgroup=str(i),
+                  showlegend=sl)
+        fig_d.add_trace(go.Scatter(x=res['freq'][m],y=res['n'][m], **kw),
+                        row=1,col=1)
+        fig_d.add_trace(go.Scatter(x=res['freq'][m],y=res['k'][m],
+                        **{**kw,'showlegend':False}), row=1,col=2)
+        fig_d.add_trace(go.Scatter(x=res['freq'][m],y=res['e1'][m],
+                        **{**kw,'showlegend':False}), row=2,col=1)
+        fig_d.add_trace(go.Scatter(x=res['freq'][m],y=res['e2'][m],
+                        **{**kw,'showlegend':False}), row=2,col=2)
+
+    apply_plotly_style(fig_d, height=680,
+                       title='Optical Constants — Temperature Dependence')
+    for r,c in [(1,1),(1,2),(2,1),(2,2)]:
+        fig_d.update_xaxes(title_text='Frequency (THz)',
+                           showgrid=False, ticks='inside', row=r,col=c)
+    fig_d.update_yaxes(title_text='n', row=1,col=1)
+    fig_d.update_yaxes(title_text='k', row=1,col=2)
+    fig_d.update_yaxes(title_text='ε₁', row=2,col=1)
+    fig_d.update_yaxes(title_text='ε₂', row=2,col=2)
+    fig_d.update_layout(legend=dict(title='Temperature',
+                                    orientation='v', x=1.01))
+    st.plotly_chart(fig_d, use_container_width=True)
+
+    # low T vs high T comparison
+    st.divider()
+    sec("Low-T vs High-T Comparison  低温 vs 高温对比")
+    lo_r,hi_r = diel_rs[0], diel_rs[-1]
+    fig_cmp = plotly_fig(340,
+        f'ε₂: {lo_r["temp"]:.0f} K vs {hi_r["temp"]:.0f} K')
+    for res, col, lbl in [
+        (lo_r,'#2980b9',f'Low-T  {lo_r["temp"]:.0f} K'),
+        (hi_r,'#c0392b',f'High-T  {hi_r["temp"]:.0f} K'),
+    ]:
+        m = (res['freq']>=f_lo_d) & (res['freq']<=f_hi_d)
+        fig_cmp.add_trace(go.Scatter(x=res['freq'][m], y=res['e2'][m],
+            mode='lines', name=lbl, line=dict(color=col,width=2.2)))
+    fig_cmp.update_xaxes(title_text='Frequency (THz)')
+    fig_cmp.update_yaxes(title_text='ε₂ (Imaginary permittivity)')
+    st.plotly_chart(fig_cmp, use_container_width=True)
+    zh("ε₂ 在声子频率处出现峰值；低温下峰更尖锐，线宽更窄，反映声子寿命增长。")
+
+# ─────────────────────────────────────────────────
+# TAB 5 — Peak detail (publication figure)
+# ─────────────────────────────────────────────────
+with tab5:
+    if not st.session_state.results:
+        st.info("Complete Fano fitting in Tab ① first.  请先在 ① 完成拟合。")
+        st.stop()
+
+    sec("Single-Peak Detail View  单峰拟合详情",
+        "选择任意温度查看完整拟合图，可直接导出用于论文")
+
+    ok_r = {k:v for k,v in st.session_state.results.items() if v}
+    labels_5 = [f"{v['Temperature_K']:.0f} K  —  {k}"
+                for k,v in sorted(ok_r.items(),
+                                  key=lambda x: x[1]['Temperature_K'])]
+    keys_5   = [k for k,_ in sorted(ok_r.items(),
+                                    key=lambda x: x[1]['Temperature_K'])]
+
+    sel5 = st.selectbox("Select temperature  选择温度",
+                        range(len(labels_5)),
+                        format_func=lambda i: labels_5[i])
+    r = ok_r[keys_5[sel5]]
+
+    # ── Plotly interactive ──
+    fig5 = plotly_fig(420,
+        f"Fano Fit  ·  {r['Temperature_K']:.0f} K  ·  "
+        f"f_r = {r['Peak_Freq_THz']:.4f} THz  ·  R² = {r['R_squared']:.4f}")
+
+    fx, sig, fit_s = r['freq_roi'], r['signal'], r['fitted_signal']
+    half, lx, rx   = r['half_height'], r['left_x'], r['right_x']
+
+    # shaded area
+    fig5.add_trace(go.Scatter(
+        x=np.concatenate([fx, fx[::-1]]),
+        y=np.concatenate([sig, np.zeros(len(sig))]),
+        fill='toself', fillcolor='rgba(44,110,165,0.12)',
+        line=dict(width=0), name='Integrated area  积分面积',
+        hoverinfo='skip'))
+    # signal
+    fig5.add_trace(go.Scatter(x=fx, y=sig, mode='lines',
+        name='Signal  信号',
+        line=dict(color='#1a5f8a', width=2.2)))
+    # fano fit
+    fig5.add_trace(go.Scatter(x=fx, y=fit_s, mode='lines',
+        name='Fano fit  Fano拟合',
+        line=dict(color='#c0392b', width=2.0, dash='dash')))
+    # depth
+    fig5.add_shape(type='line', x0=r['peak_x'],x1=r['peak_x'],
+                   y0=0, y1=r['Linear_Depth'],
+                   line=dict(color='#27ae60',width=2.0,dash='dot'))
+    fig5.add_annotation(x=r['peak_x'], y=r['Linear_Depth']*0.52,
+        text=f"  Depth = {r['Linear_Depth']:.4f}",
+        showarrow=False, xanchor='left',
+        font=dict(color='#27ae60',size=11))
+    # FWHM
+    fig5.add_shape(type='line', x0=lx,x1=rx, y0=half,y1=half,
+                   line=dict(color='#8e44ad',width=2.0))
+    fig5.add_annotation(x=(lx+rx)/2, y=half*1.15,
+        text=f"FWHM = {r['FWHM_THz']:.4f} THz",
+        showarrow=False, font=dict(color='#8e44ad',size=11))
+
+    fig5.update_xaxes(title_text='Frequency (THz)')
+    fig5.update_yaxes(title_text='ΔAmplitude (a.u., baseline corrected)',
+                      rangemode='tozero')
+    fig5.update_layout(legend=dict(x=0.62,y=0.98))
+    st.plotly_chart(fig5, use_container_width=True)
+
+    # parameter metrics
+    pc = st.columns(6)
+    for col, lbl, val in zip(pc,
+        ['f_r (THz)','κ (THz)','γ (THz)','φ (rad)','h (dB)','R²'],
+        [r['Peak_Freq_THz'],r['Fano_Kappa'],r['Fano_Gamma'],
+         r['Fano_Phi'],r['Depth_dB'],r['R_squared']]):
+        col.metric(lbl, f"{val:.4f}")
+    zh("f_r: 共振频率 · κ: 耦合强度 · γ: 本征线宽 · φ: Fano相位 · h: 峰深度(dB) · R²: 拟合优度")
+
+    # ── Publication matplotlib figure ──────────────────────────
+    st.divider()
+    sec("Publication-Quality Figure (matplotlib)",
+        "论文级静态图 · Nature/Science排版标准")
+
+    col_fig, col_opt = st.columns([3,1])
+    with col_opt:
+        fig_w_in = st.number_input("Width (in)  图宽(英寸)",
+                                   2.5, 7.5, 3.5, 0.5)
+        fig_h_in = st.number_input("Height (in)  图高(英寸)",
+                                   2.0, 6.0, 3.0, 0.5)
+        show_fill= st.checkbox("Show area fill  显示面积", True)
+        show_ann = st.checkbox("Show annotations  显示标注", True)
+
+    with col_fig:
+        apply_nature_style()
+        fig_pub, ax = plt.subplots(figsize=(fig_w_in, fig_h_in))
+
+        if show_fill:
+            ax.fill_between(fx, 0, sig, color='#2c6ea5', alpha=0.12,
+                            zorder=1)
+        ax.plot(fx, sig, color='#1a5f8a', lw=1.4,
+                label='Signal', zorder=3)
+        ax.plot(fx, fit_s, color='#c0392b', lw=1.4, ls='--',
+                label='Fano fit', zorder=4)
+
+        if show_ann:
+            ax.vlines(r['peak_x'], 0, r['Linear_Depth'],
+                      colors='#27ae60', lw=1.2, ls=':', zorder=2)
+            ax.hlines(half, lx, rx,
+                      colors='#8e44ad', lw=1.2, zorder=2)
+            ax.annotate(f"FWHM = {r['FWHM_THz']:.4f} THz",
+                        xy=((lx+rx)/2, half),
+                        xytext=((lx+rx)/2, half*1.3),
+                        fontsize=6.5, color='#8e44ad', ha='center',
+                        arrowprops=dict(arrowstyle='-',
+                                        color='#8e44ad', lw=0.8))
+
+        ax.set_xlabel('Frequency (THz)')
+        ax.set_ylabel('ΔAmplitude (arb. u.)')
+        ax.set_title(f'T = {r["Temperature_K"]:.0f} K',
+                     pad=6, fontsize=8)
+        ax.set_ylim(bottom=0)
+        ax.legend(frameon=True, loc='upper right')
+        format_ax(ax)
+        panel_label(ax, 'a')
+        plt.tight_layout(pad=0.4)
+
+        buf_pub = io.BytesIO()
+        fig_pub.savefig(buf_pub, format='png', dpi=200,
+                        bbox_inches='tight')
+        plt.close(fig_pub)
+        buf_pub.seek(0)
+        st.image(buf_pub, caption=(
+            f"T = {r['Temperature_K']:.0f} K  ·  "
+            f"f_r = {r['Peak_Freq_THz']:.4f} THz  ·  "
+            f"R² = {r['R_squared']:.4f}"))
+
+    # export this single figure
+    st.download_button(
+        f"⬇️  Download this figure (.{export_fmt})  下载此图",
+        data=_single_fig_export(r, fig_w_in, fig_h_in,
+                                export_dpi, export_fmt),
+        file_name=f"fano_{r['Temperature_K']:.0f}K.{export_fmt}",
+        mime=f"image/{export_fmt}" if export_fmt!='pdf'
+             else "application/pdf",
+        use_container_width=True)
+
+# ─────────────────────────────────────────────────
+# TAB 6 — Export
+# ─────────────────────────────────────────────────
+with tab6:
+    sec("Export Results  导出结果", "Excel数据 · PDF报告 · 高分辨率图集")
+
+    col_e1, col_e2, col_e3 = st.columns(3)
+
+    # Excel
+    with col_e1:
+        st.markdown("### 📊 Excel data")
+        zh("包含Fano参数、BCS参数、介电函数三个Sheet")
+        if st.session_state.df is not None:
+            buf_xl = _make_excel(st.session_state.df,
+                                 st.session_state.diel)
+            st.download_button("⬇️  Download Excel",
+                data=buf_xl, use_container_width=True,
+                file_name="THz_Analysis_Results.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        else:
+            st.info("Complete fitting first.  请先完成拟合。")
+
+    # PDF report
+    with col_e2:
+        st.markdown("### 📄 PDF report")
+        zh("包含BCS拟合图、瀑布图、所有代表性单峰拟合图")
+        disabled_pdf = st.session_state.df is None
+        if st.button("Generate PDF report  生成PDF报告",
+                     use_container_width=True, disabled=disabled_pdf):
+            with st.spinner("Generating publication-quality PDF …  生成中 …"):
+                buf_pdf = _make_pdf_report(
+                    st.session_state.df,
+                    st.session_state.results,
+                    tc_fixed, export_dpi)
+            st.download_button("⬇️  Download PDF",
+                data=buf_pdf, use_container_width=True,
+                file_name="THz_Analysis_Report.pdf",
+                mime="application/pdf")
+
+    # Figure pack
+    with col_e3:
+        st.markdown("### 🖼️ Figure pack")
+        zh("所有温度的拟合图集，高分辨率PDF")
+        if (st.button("Export all fit figures  导出所有拟合图",
+                      use_container_width=True,
+                      disabled=(not st.session_state.results))):
+            with st.spinner("Rendering all figures …"):
+                buf_all = _export_all_figs(
+                    st.session_state.results, export_dpi)
+            st.download_button("⬇️  Download figure pack",
+                data=buf_all, use_container_width=True,
+                file_name="THz_all_fits.pdf",
+                mime="application/pdf")
+
+
+# ══════════════════════════════════════════════════════════════
+# HELPER FUNCTIONS (defined after tabs to allow st.stop() above)
+# ══════════════════════════════════════════════════════════════
