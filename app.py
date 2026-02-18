@@ -389,6 +389,10 @@ if uploaded:
     need_reload = (not st.session_state.files or
                    {f.name for f in uploaded} !=
                    {d['filename'] for d in st.session_state.files})
+    # Also reload if old data format (missing amp_db)
+    if (not need_reload and st.session_state.files
+            and 'amp_db' not in st.session_state.files[0]):
+        need_reload = True
     if need_reload:
         loader = DataLoader()
         files, errs = [], []
@@ -762,7 +766,7 @@ with tab0:
         ))
 
         fig_avg.update_xaxes(title_text='Frequency (THz)')
-        fig_avg.update_yaxes(title_text='Amplitude (a.u.)')
+        fig_avg.update_yaxes(title_text=_amp_label)
         st.plotly_chart(fig_avg, use_container_width=True)
         zh("细线：各次扫描的原始数据 · 粗红线：平均后的数据 · 平均前插值到公共频率格点")
     else:
@@ -861,7 +865,7 @@ with tab1:
         fig.add_vrect(x0=roi_l, x1=roi_r, fillcolor="#c0392b",
                       opacity=0.07, line_width=0)
         fig.update_xaxes(title_text="Frequency (THz)")
-        fig.update_yaxes(title_text="Amplitude (a.u.)")
+        fig.update_yaxes(title_text=_amp_label)
         st.plotly_chart(fig, use_container_width=True)
 
     # ── batch fitting ──────────────────────────────
