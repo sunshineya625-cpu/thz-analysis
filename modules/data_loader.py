@@ -42,7 +42,8 @@ class DataLoader:
 
         arr     = np.array(rows)
         freq    = arr[:, 3].astype(float)
-        amp     = arr[:, 4].astype(float)
+        amp     = arr[:, 4].astype(float)          # THz AMP FD
+        amp_db  = arr[:, 5].astype(float) if arr.shape[1] >= 6 else amp.copy()  # THz AMP dB
         time    = arr[:, 1].astype(float)
         E_field = arr[:, 2].astype(float)
 
@@ -53,6 +54,7 @@ class DataLoader:
             'temperature': temperature,
             'freq':        freq[mask],
             'amp':         amp[mask],
+            'amp_db':      amp_db[mask],
             'time':        time[mask],
             'E_field':     E_field[mask],
         }

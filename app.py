@@ -220,6 +220,14 @@ with st.sidebar:
 
     st.markdown('<div class="sidebar-section">⚙️ Processing · 处理参数</div>',
                 unsafe_allow_html=True)
+    amp_col_choice = st.radio(
+        "Amplitude column / 振幅列",
+        ["AMP FD (col 5)", "AMP dB (col 6)"],
+        index=0,
+        help="Choose which amplitude column to use for analysis.\n"
+             "选择用于分析的振幅列：FD（线性）或 dB（对数）",
+    )
+    use_db = "dB" in amp_col_choice
     smooth_w = st.slider("Smoothing window 平滑窗口", 1, 15, 5, 2)
     rm_bad   = st.checkbox("Remove outliers 去除坏点", True)
 
@@ -330,6 +338,7 @@ def average_by_temperature(files, tol=1.0):
                 'temperature': m['temperature'],
                 'freq': m['freq'].copy(),
                 'amp': m['amp'].copy(),
+                'amp_db': m.get('amp_db', m['amp']).copy(),
                 'time': m['time'].copy() if 'time' in m else np.array([]),
                 'E_field': m['E_field'].copy() if 'E_field' in m else np.array([]),
                 'n_averaged': 1,
@@ -345,12 +354,15 @@ def average_by_temperature(files, tol=1.0):
         df = min(steps) if steps else 0.001
         f_common = np.arange(f_min, f_max, df)
 
-        # Interpolate and average amplitudes
+        # Interpolate and average both amplitude columns
         interp_amps = []
+        interp_amps_db = []
         for m in members:
-            interp_amp = np.interp(f_common, m['freq'], m['amp'])
-            interp_amps.append(interp_amp)
+            interp_amps.append(np.interp(f_common, m['freq'], m['amp']))
+            db_col = m.get('amp_db', m['amp'])
+            interp_amps_db.append(np.interp(f_common, m['freq'], db_col))
         avg_amp = np.mean(interp_amps, axis=0)
+        avg_amp_db = np.mean(interp_amps_db, axis=0)
 
         # For time-domain: use the first member's data (needed for dielectric)
         m0 = members[0]
@@ -359,6 +371,7 @@ def average_by_temperature(files, tol=1.0):
             'temperature': mean_temp,
             'freq': f_common,
             'amp': avg_amp,
+            'amp_db': avg_amp_db,
             'time': m0.get('time', np.array([])),
             'E_field': m0.get('E_field', np.array([])),
             'n_averaged': len(members),
@@ -667,6 +680,21 @@ tab0, tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
 # Use averaged files for all downstream analysis
 files = st.session_state.averaged_files or st.session_state.files
 raw_files = st.session_state.files
+
+# ── Apply amplitude column selection ──
+if use_db:
+    import copy
+    files = copy.deepcopy(files)
+    raw_files = copy.deepcopy(raw_files)
+    for d in files:
+        if 'amp_db' in d:
+            d['amp'] = d['amp_db']
+    for d in raw_files:
+        if 'amp_db' in d:
+            d['amp'] = d['amp_db']
+    _amp_label = "Amplitude dB"
+else:
+    _amp_label = "Amplitude (a.u.)"
 
 # ─────────────────────────────────────────────────
 # TAB 0 — Averaging
