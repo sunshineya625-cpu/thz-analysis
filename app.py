@@ -23,6 +23,18 @@ from modules.dielectric_calc import DielectricCalculator
 from modules.science_plot   import (apply_nature_style, apply_plotly_style,
                                     temp_cmap, format_ax, panel_label,
                                     SINGLE_COL, DOUBLE_COL, TALL_DOUBLE, WONG7)
+from modules.formulas       import (FANO_FORMULA, FANO_PARAMS, FANO_EXPLANATION,
+                                    DEPTH_DB_FORMULA, DEPTH_DB_EXPLANATION,
+                                    LINEAR_DEPTH_FORMULA, LINEAR_DEPTH_EXPLANATION,
+                                    FWHM_FORMULA, FWHM_EXPLANATION,
+                                    AREA_FORMULA, AREA_EXPLANATION,
+                                    R_SQUARED_FORMULA, R_SQUARED_EXPLANATION,
+                                    BCS_FORMULA, BCS_PARAMS, BCS_EXPLANATION,
+                                    TRANSFER_FUNC_FORMULA, REFRACTIVE_INDEX_FORMULA,
+                                    EXTINCTION_FORMULA, DIELECTRIC_FORMULA,
+                                    DIELECTRIC_PARAMS, DIELECTRIC_EXPLANATION,
+                                    WATERFALL_FORMULA, WATERFALL_EXPLANATION,
+                                    generate_formula_doc)
 
 apply_nature_style()
 
@@ -558,6 +570,50 @@ with tab1:
     st.divider()
     sec("ROI Selection", "感兴趣区域选择（将统一应用到所有文件）")
 
+    # ── Formula documentation ──
+    with st.expander("📐 Fano Resonance — Formulas & Theory / 公式与理论", expanded=False):
+        st.markdown("### Fano Resonance Model / Fano 共振模型")
+        st.latex(FANO_FORMULA.strip().replace('$$',''))
+        st.markdown(FANO_EXPLANATION)
+        st.markdown("---")
+        st.markdown("### Parameters / 参数说明")
+        for k, v in FANO_PARAMS.items():
+            st.markdown(f"**{k}** (`{v['unit']}`): {v['name']}")
+            st.caption(v['desc'])
+        st.markdown("---")
+        st.markdown("### Derived Quantities / 导出量")
+        for title, formula, expl in [
+            ("Peak Depth (dB)", DEPTH_DB_FORMULA, DEPTH_DB_EXPLANATION),
+            ("Linear Depth / 线性深度", LINEAR_DEPTH_FORMULA, LINEAR_DEPTH_EXPLANATION),
+            ("FWHM / 半高全宽", FWHM_FORMULA, FWHM_EXPLANATION),
+            ("Integrated Area / 积分面积", AREA_FORMULA, AREA_EXPLANATION),
+            ("R² / 决定系数", R_SQUARED_FORMULA, R_SQUARED_EXPLANATION),
+        ]:
+            st.markdown(f"**{title}**")
+            st.latex(formula.strip().replace('$$',''))
+            st.caption(expl)
+
+    # ── Editable fitting bounds ──
+    with st.expander("⚙️ Advanced: Fano Fitting Bounds / 高级：拟合参数边界", expanded=False):
+        st.caption("Adjust the parameter bounds for Fano fitting. "
+                   "调整 Fano 拟合的参数边界约束。")
+        adv_c1, adv_c2 = st.columns(2)
+        with adv_c1:
+            kappa_max = st.number_input("κ max", 0.1, 10.0, 2.0, 0.1,
+                                        key="kappa_max")
+            gamma_max = st.number_input("γ max", 0.1, 10.0, 2.0, 0.1,
+                                        key="gamma_max")
+        with adv_c2:
+            phi_range = st.slider("φ range (rad)", -3.14, 3.14,
+                                  (-3.14, 3.14), 0.01, key="phi_range")
+            max_iter  = st.number_input("Max iterations / 最大迭代",
+                                        1000, 50000, 10000, 1000,
+                                        key="max_iter")
+        st.session_state['adv_fano'] = {
+            'kappa_max': kappa_max, 'gamma_max': gamma_max,
+            'phi_range': phi_range, 'max_iter': int(max_iter),
+        }
+
     col_ctrl, col_plot = st.columns([1, 3])
     with col_ctrl:
         idx = st.selectbox("Preview file  预览文件",
@@ -683,6 +739,29 @@ with tab2:
         "BCS序参量温度依赖拟合 · Δ(T) = A·tanh(β√(Tc/T−1))")
     zh("公式来源：BCS超导理论类比，广泛用于CDW/激子绝缘体相变表征")
 
+    # ── Formula documentation ──
+    with st.expander("📐 BCS Order Parameter — Formulas & Theory / 公式与理论", expanded=False):
+        st.latex(BCS_FORMULA.strip().replace('$$',''))
+        st.markdown(BCS_EXPLANATION)
+        st.markdown("---")
+        st.markdown("### Parameters / 参数说明")
+        for k, v in BCS_PARAMS.items():
+            st.markdown(f"**{k}** (`{v['unit']}`): {v['name']}")
+            st.caption(v['desc'])
+
+    # ── Editable BCS bounds ──
+    with st.expander("⚙️ Advanced: BCS Fitting Bounds / 高级：BCS拟合边界", expanded=False):
+        bcs_c1, bcs_c2 = st.columns(2)
+        with bcs_c1:
+            tc_lo = st.number_input("T_c lower bound (K)", 200.0, 400.0, 290.0, 5.0, key="tc_lo")
+            tc_hi = st.number_input("T_c upper bound (K)", 200.0, 500.0, 360.0, 5.0, key="tc_hi")
+        with bcs_c2:
+            beta_lo = st.number_input("β lower bound", 0.1, 5.0, 0.3, 0.1, key="beta_lo")
+            beta_hi = st.number_input("β upper bound", 0.5, 10.0, 8.0, 0.5, key="beta_hi")
+        st.session_state['adv_bcs'] = {
+            'tc_bounds': (tc_lo, tc_hi), 'beta_bounds': (beta_lo, beta_hi),
+        }
+
     df  = st.session_state.df.sort_values('Temperature_K')
     bcs = BCSAnalyzer(tc_fixed=tc_fixed)
     T   = df['Temperature_K'].values.astype(float)
@@ -779,6 +858,18 @@ with tab3:
     sec("Temperature-Dependent Spectra (Waterfall)",
         "温度演化瀑布图 · 偏移量 = 峰高 × offset系数")
 
+    # ── Formula documentation ──
+    with st.expander("📐 Waterfall Offset — Formula / 偏移公式", expanded=False):
+        st.latex(WATERFALL_FORMULA.strip().replace('$$',''))
+        st.markdown(WATERFALL_EXPLANATION)
+        st.markdown("---")
+        st.markdown(
+            "**Parameters / 参数**\n\n"
+            "- **i**: curve index (sorted by temperature) / 曲线索引（按温度排序）\n"
+            "- **median(peak heights)**: auto-calculated from fitting results / 自动从拟合结果计算\n"
+            "- **m**: user-adjustable multiplier (slider below) / 用户可调乘子（下方滑块）"
+        )
+
     ctl1, ctl2, ctl3 = st.columns(3)
     with ctl1:
         offset_mult = st.slider("Vertical offset  纵向偏移系数",
@@ -864,6 +955,38 @@ with tab4:
         "光学常数与复介电函数 · n, k, ε₁, ε₂")
     zh("方法：频域传输函数法 H(ω)=S_sam/S_ref → n(ω) → k(ω) → ε(ω)=ε₁+iε₂")
 
+    # ── Formula documentation ──
+    with st.expander("📐 Optical Constants — Formulas & Theory / 公式与理论", expanded=False):
+        st.markdown("### Transfer Function / 传输函数")
+        st.latex(TRANSFER_FUNC_FORMULA.strip().replace('$$',''))
+        st.markdown("### Refractive Index / 折射率")
+        st.latex(REFRACTIVE_INDEX_FORMULA.strip().replace('$$',''))
+        st.markdown("### Extinction Coefficient / 消光系数")
+        st.latex(EXTINCTION_FORMULA.strip().replace('$$',''))
+        st.markdown("### Dielectric Function / 介电函数")
+        st.latex(DIELECTRIC_FORMULA.strip().replace('$$',''))
+        st.markdown("---")
+        st.markdown(DIELECTRIC_EXPLANATION)
+        st.markdown("### Parameters / 参数说明")
+        for k, v in DIELECTRIC_PARAMS.items():
+            st.markdown(f"**{k}** (`{v['unit']}`): {v['name']}")
+            st.caption(v['desc'])
+
+    # ── Editable dielectric parameters ──
+    with st.expander("⚙️ Advanced: Dielectric Calculation Parameters / 高级：介电计算参数", expanded=False):
+        diel_c1, diel_c2 = st.columns(2)
+        with diel_c1:
+            gain_limit = st.number_input("Gain limit / 增益限制", 0.5, 1.0, 0.85, 0.05,
+                                         key="gain_limit",
+                                         help="Max |H| normalization threshold")
+            diel_smooth = st.number_input("Smoothing window / 平滑窗口", 1, 21, 5, 2,
+                                          key="diel_smooth")
+        with diel_c2:
+            phase_fit_lo = st.number_input("Phase fit range low (THz)", 0.1, 2.0, 0.5, 0.1,
+                                           key="phase_lo")
+            phase_fit_hi = st.number_input("Phase fit range high (THz)", 0.5, 4.0, 1.0, 0.1,
+                                           key="phase_hi")
+
     with st.spinner("Computing dielectric functions …  计算中 …"):
         calc    = DielectricCalculator(thickness=thickness)
         diel_rs = calc.calculate_all(ref_data, files)
@@ -944,6 +1067,28 @@ with tab5:
 
     sec("Single-Peak Detail View  单峰拟合详情",
         "选择任意温度查看完整拟合图，可直接导出用于论文")
+
+    # ── Formula documentation ──
+    with st.expander("📐 Fano Parameters — Complete Reference / 参数完整参考", expanded=False):
+        st.markdown("### Fano Resonance Model")
+        st.latex(FANO_FORMULA.strip().replace('$$',''))
+        st.markdown(FANO_EXPLANATION)
+        st.markdown("---")
+        st.markdown("### All Parameters")
+        for k, v in FANO_PARAMS.items():
+            st.markdown(f"**{k}** (`{v['unit']}`): {v['name']}")
+            st.caption(v['desc'])
+        st.markdown("---")
+        for title, formula, expl in [
+            ("Peak Depth (dB)", DEPTH_DB_FORMULA, DEPTH_DB_EXPLANATION),
+            ("Linear Depth", LINEAR_DEPTH_FORMULA, LINEAR_DEPTH_EXPLANATION),
+            ("FWHM", FWHM_FORMULA, FWHM_EXPLANATION),
+            ("Area", AREA_FORMULA, AREA_EXPLANATION),
+            ("R²", R_SQUARED_FORMULA, R_SQUARED_EXPLANATION),
+        ]:
+            st.markdown(f"**{title}**")
+            st.latex(formula.strip().replace('$$',''))
+            st.caption(expl)
 
     ok_r = {k:v for k,v in st.session_state.results.items() if v}
     labels_5 = [f"{v['Temperature_K']:.0f} K  —  {k}"
@@ -1082,9 +1227,9 @@ with tab5:
 # TAB 6 — Export
 # ─────────────────────────────────────────────────
 with tab6:
-    sec("Export Results  导出结果", "Excel数据 · PDF报告 · 高分辨率图集")
+    sec("Export Results  导出结果", "Excel数据 · PDF报告 · 高分辨率图集 · 公式文档")
 
-    col_e1, col_e2, col_e3 = st.columns(3)
+    col_e1, col_e2, col_e3, col_e4 = st.columns(4)
 
     # Excel
     with col_e1:
@@ -1131,6 +1276,41 @@ with tab6:
                 data=buf_all, use_container_width=True,
                 file_name="THz_all_fits.pdf",
                 mime="application/pdf")
+
+    # Formula documentation
+    with col_e4:
+        st.markdown("### 📐 Formula doc")
+        zh("所有公式、参数说明、当前参数值的完整文档")
+        # Collect current session parameters
+        current_params = {
+            "Smoothing window": smooth_w,
+            "Remove outliers": rm_bad,
+            "Export DPI": export_dpi,
+            "Export format": export_fmt,
+            "Sample thickness (mm)": thickness,
+            "Dielectric enabled": diel_on,
+        }
+        if st.session_state.get('adv_fano'):
+            af = st.session_state['adv_fano']
+            current_params["Fano κ max"] = af['kappa_max']
+            current_params["Fano γ max"] = af['gamma_max']
+            current_params["Fano φ range"] = f"{af['phi_range']}"
+            current_params["Fano max iterations"] = af['max_iter']
+        if st.session_state.get('adv_bcs'):
+            ab = st.session_state['adv_bcs']
+            current_params["BCS T_c bounds (K)"] = f"{ab['tc_bounds']}"
+            current_params["BCS β bounds"] = f"{ab['beta_bounds']}"
+        if tc_fixed is not None:
+            current_params["T_c fixed (K)"] = tc_fixed
+        if st.session_state.get('fitted_tc'):
+            current_params["Fitted T_c"] = st.session_state['fitted_tc']
+
+        formula_md = generate_formula_doc(current_params)
+        st.download_button("⬇️  Download formula doc",
+            data=formula_md.encode('utf-8'),
+            use_container_width=True,
+            file_name="THz_Formula_Documentation.md",
+            mime="text/markdown")
 
 
 # ══════════════════════════════════════════════════════════════
