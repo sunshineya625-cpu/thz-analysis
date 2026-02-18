@@ -842,13 +842,17 @@ with tab1:
 
     col_ctrl, col_plot = st.columns([1, 3])
     with col_ctrl:
-        idx = st.selectbox("Preview file  预览文件",
-            range(len(files)),
-            format_func=lambda i:
-                f"{files[i]['filename']} ({files[i]['temperature']:.0f} K)")
-        sel = files[idx]
+        view_mode = st.radio("View mode / 查看模式",
+                             ["Single file 单文件", "All overlay 全部叠加"],
+                             key="roi_view_mode")
+
+        if "Single" in view_mode:
+            idx = st.selectbox("Preview file  预览文件",
+                range(len(files)),
+                format_func=lambda i:
+                    f"{files[i]['filename']} ({files[i]['temperature']:.0f} K)")
+        sel = files[idx] if "Single" in view_mode else files[0]
         fa  = sel['freq'].astype(float)
-        aa  = sel['amp'].astype(float)
         flo, fhi = float(fa.min()), float(fa.max())
 
         st.caption("Left boundary (THz) 左边界")
@@ -881,17 +885,50 @@ with tab1:
                            type="primary", use_container_width=True)
 
     with col_plot:
-        fig = plotly_fig(320, f"{sel['filename']}  ·  {sel['temperature']:.0f} K")
-        fig.add_trace(go.Scatter(x=fa, y=aa, mode='lines',
-            name='Spectrum', line=dict(color='#334466', width=1.2)))
-        mask = (fa >= roi_l) & (fa <= roi_r)
-        fig.add_trace(go.Scatter(x=fa[mask], y=aa[mask], mode='lines',
-            name='ROI', line=dict(color='#c0392b', width=2.2)))
-        fig.add_vrect(x0=roi_l, x1=roi_r, fillcolor="#c0392b",
-                      opacity=0.07, line_width=0)
-        fig.update_xaxes(title_text="Frequency (THz)")
-        fig.update_yaxes(title_text=_amp_label)
-        st.plotly_chart(fig, use_container_width=True)
+        if "Single" in view_mode:
+            # ── Single file preview ──
+            aa = sel['amp'].astype(float)
+            fig = plotly_fig(380, f"{sel['filename']}  ·  {sel['temperature']:.0f} K")
+            fig.add_trace(go.Scatter(x=fa, y=aa, mode='lines',
+                name='Spectrum', line=dict(color='#334466', width=1.2)))
+            mask = (fa >= roi_l) & (fa <= roi_r)
+            fig.add_trace(go.Scatter(x=fa[mask], y=aa[mask], mode='lines',
+                name='ROI', line=dict(color='#c0392b', width=2.2)))
+            fig.add_vrect(x0=roi_l, x1=roi_r, fillcolor="#c0392b",
+                          opacity=0.07, line_width=0)
+            fig.update_xaxes(title_text="Frequency (THz)")
+            fig.update_yaxes(title_text=_amp_label)
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            # ── All files overlay ──
+            n_files = len(files)
+            colors_all = get_colors(n_files)
+            fig = plotly_fig(480, f"All Spectra ({n_files} files)  ·  全部光谱叠加")
+            for i, d in enumerate(files):
+                fx = d['freq'].astype(float)
+                fy = d['amp'].astype(float)
+                show_leg = (i == 0 or i == n_files - 1 or n_files <= 8)
+                fig.add_trace(go.Scatter(
+                    x=fx, y=fy, mode='lines',
+                    name=f"{d['temperature']:.0f} K",
+                    line=dict(color=colors_all[i], width=1.0),
+                    showlegend=show_leg,
+                    legendgroup=str(i),
+                    hovertemplate=(
+                        f"<b>{d['temperature']:.0f} K</b><br>"
+                        f"f = %{{x:.3f}} THz<br>"
+                        f"amp = %{{y:.4f}}<extra></extra>"),
+                ))
+            fig.add_vrect(x0=roi_l, x1=roi_r, fillcolor="#c0392b",
+                          opacity=0.07, line_width=0,
+                          annotation_text="ROI", annotation_position="top left")
+            fig.update_xaxes(title_text="Frequency (THz)")
+            fig.update_yaxes(title_text=_amp_label)
+            fig.update_layout(legend=dict(title="Temperature",
+                                          orientation='v', x=1.01))
+            st.plotly_chart(fig, use_container_width=True)
+            zh(f"颜色：蓝→低温，红→高温 · 共 {n_files} 条曲线 · "
+               "阴影区域为选定的 ROI 范围")
 
     # ── batch fitting ──────────────────────────────
     if do_fit:
