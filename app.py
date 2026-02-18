@@ -181,7 +181,8 @@ button[data-baseweb="tab"] {
 # SESSION STATE
 # ══════════════════════════════════════════════════════════════
 _defaults = dict(files=[], results={}, df=None, step=1,
-                 diel=[], roi=(0.8,1.3), fitted_tc="—")
+                 diel=[], roi=(0.8,1.3), fitted_tc="—",
+                 ref_data=None, ref_name=None)
 for k,v in _defaults.items():
     if k not in st.session_state:
         st.session_state[k] = v
@@ -230,16 +231,42 @@ with st.sidebar:
     if "Fixed" in tc_mode:
         tc_fixed = st.slider("T_c (K)", 280.0, 380.0, 328.0, 0.5)
 
+    st.markdown('<div class="sidebar-section">📎 Reference / Substrate · 参考基底</div>',
+                unsafe_allow_html=True)
+    ref_uploaded = st.file_uploader(
+        "Upload reference file (.txt)  上传参考(基底)文件",
+        type=["txt"], accept_multiple_files=False,
+        help="Reference/substrate measurement for dielectric calculation.\n"
+             "介电计算所需的参考/基底测量数据。此文件不会参与Fano/BCS分析。",
+        key="ref_uploader")
+
+    if ref_uploaded:
+        if (st.session_state.ref_name != ref_uploaded.name):
+            loader_ref = DataLoader()
+            try:
+                st.session_state.ref_data = loader_ref.load_file(ref_uploaded)
+                st.session_state.ref_name = ref_uploaded.name
+            except Exception as e:
+                st.error(f"❌ Reference load failed: {e}")
+                st.session_state.ref_data = None
+                st.session_state.ref_name = None
+
+    if st.session_state.ref_data:
+        st.caption(f"📌 Ref: **{st.session_state.ref_name}** · "
+                   f"T={st.session_state.ref_data['temperature']:.0f} K")
+
     st.markdown('<div class="sidebar-section">⚡ Dielectric · 介电函数</div>',
                 unsafe_allow_html=True)
     diel_on = st.checkbox("Enable dielectric calculation 启用介电计算")
-    ref_name  = None
     thickness = 0.5
-    if diel_on and st.session_state.files:
-        fnames   = [d['filename'] for d in st.session_state.files]
-        ref_name = st.selectbox("Reference file 参考文件", fnames)
-        thickness= st.number_input("Sample thickness (mm) 样品厚度",
-                                   0.01, 20.0, 0.5, 0.01)
+    if diel_on:
+        thickness = st.number_input("Sample thickness (mm) 样品厚度",
+                                    0.01, 20.0, 0.5, 0.01)
+        if not st.session_state.ref_data:
+            st.warning("⚠️ Upload a reference file above for dielectric.\n"
+                       "请在上方上传参考文件以启用介电计算。")
+    ref_name = st.session_state.ref_name
+
 
     st.markdown('<div class="sidebar-section">🖼️ Figure Export · 图片导出</div>',
                 unsafe_allow_html=True)
@@ -945,10 +972,10 @@ with tab4:
                 "请在左侧勾选启用介电计算。")
         st.stop()
 
-    ref_data = next((d for d in files if d['filename']==ref_name), None)
+    ref_data = st.session_state.ref_data
     if ref_data is None or len(ref_data.get('time',[]))==0:
-        st.error("Reference file has no time-domain data.  "
-                 "参考文件无时域数据，请检查格式。")
+        st.error("No reference file uploaded, or reference has no time-domain data.  "
+                 "没有上传参考文件，或参考文件无时域数据。请在侧边栏上传参考基底文件。")
         st.stop()
 
     sec("Optical Constants & Dielectric Functions",
