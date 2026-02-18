@@ -180,7 +180,7 @@ button[data-baseweb="tab"] {
 # ══════════════════════════════════════════════════════════════
 # SESSION STATE
 # ══════════════════════════════════════════════════════════════
-_defaults = dict(files=[], results={}, df=None, step=1,
+_defaults = dict(files=[], averaged_files=[], results={}, df=None, step=1,
                  diel=[], roi=(0.8,1.3), fitted_tc="—",
                  ref_data=None, ref_name=None)
 for k,v in _defaults.items():
@@ -291,6 +291,85 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════════════════
+# TEMPERATURE AVERAGING
+# ══════════════════════════════════════════════════════════════
+def average_by_temperature(files, tol=1.0):
+    """Group files by temperature (±tol K) and average within each group.
+
+    Returns a list of averaged dicts (same structure as DataLoader output)
+    plus a grouping info dict {temp: [filenames]}.
+    """
+    from collections import defaultdict
+
+    # Sort by temperature
+    sorted_files = sorted(files, key=lambda d: d['temperature'])
+
+    # Group using tolerance
+    groups = []  # [(representative_temp, [file_dicts])]
+    for d in sorted_files:
+        matched = False
+        for g in groups:
+            if abs(d['temperature'] - g[0]) <= tol:
+                g[1].append(d)
+                matched = True
+                break
+        if not matched:
+            groups.append((d['temperature'], [d]))
+
+    averaged = []
+    group_info = {}  # {temp: [filenames]}
+    for rep_temp, members in groups:
+        mean_temp = np.mean([m['temperature'] for m in members])
+        fnames = [m['filename'] for m in members]
+        group_info[round(mean_temp, 1)] = fnames
+
+        if len(members) == 1:
+            m = members[0]
+            averaged.append({
+                'filename': m['filename'],
+                'temperature': m['temperature'],
+                'freq': m['freq'].copy(),
+                'amp': m['amp'].copy(),
+                'time': m['time'].copy() if 'time' in m else np.array([]),
+                'E_field': m['E_field'].copy() if 'E_field' in m else np.array([]),
+                'n_averaged': 1,
+                'source_files': fnames,
+            })
+            continue
+
+        # Build common frequency grid (union range, finest resolution)
+        f_min = max(m['freq'].min() for m in members)
+        f_max = min(m['freq'].max() for m in members)
+        steps = [np.median(np.diff(m['freq'])) for m in members
+                 if len(m['freq']) > 1]
+        df = min(steps) if steps else 0.001
+        f_common = np.arange(f_min, f_max, df)
+
+        # Interpolate and average amplitudes
+        interp_amps = []
+        for m in members:
+            interp_amp = np.interp(f_common, m['freq'], m['amp'])
+            interp_amps.append(interp_amp)
+        avg_amp = np.mean(interp_amps, axis=0)
+
+        # For time-domain: use the first member's data (needed for dielectric)
+        m0 = members[0]
+        averaged.append({
+            'filename': f"avg_{mean_temp:.0f}K ({len(members)} scans)",
+            'temperature': mean_temp,
+            'freq': f_common,
+            'amp': avg_amp,
+            'time': m0.get('time', np.array([])),
+            'E_field': m0.get('E_field', np.array([])),
+            'n_averaged': len(members),
+            'source_files': fnames,
+        })
+
+    averaged.sort(key=lambda x: x['temperature'])
+    return averaged, group_info
+
+
+# ══════════════════════════════════════════════════════════════
 # FILE LOADING
 # ══════════════════════════════════════════════════════════════
 if uploaded:
@@ -307,6 +386,10 @@ if uploaded:
                 errs.append(f"{uf.name}: {e}")
         files.sort(key=lambda x: x['temperature'])
         st.session_state.files = files
+        # Compute averages
+        avg_files, grp_info = average_by_temperature(files)
+        st.session_state.averaged_files = avg_files
+        st.session_state.avg_group_info = grp_info
         st.session_state.results = {}
         st.session_state.df = None
         if st.session_state.step == 1:
@@ -317,16 +400,19 @@ if uploaded:
 # ── KPI bar ──────────────────────────────────────────────────
 if st.session_state.files:
     files = st.session_state.files
-    temps = [d['temperature'] for d in files]
+    avg_files = st.session_state.averaged_files or files
+    temps = [d['temperature'] for d in avg_files]
     n_ok  = len([r for r in st.session_state.results.values() if r])
     tc_str= st.session_state.fitted_tc
+    n_raw = len(files)
+    n_avg = len(avg_files)
 
     st.markdown(f"""
     <div class="kpi-row">
       <div class="kpi">
-        <div class="kpi-val">{len(files)}</div>
-        <div class="kpi-lbl">Files Loaded</div>
-        <div class="kpi-zh">已加载文件数</div>
+        <div class="kpi-val">{n_raw} → {n_avg}</div>
+        <div class="kpi-lbl">Raw → Averaged</div>
+        <div class="kpi-zh">原始 → 平均后</div>
       </div>
       <div class="kpi">
         <div class="kpi-val">{min(temps):.0f} – {max(temps):.0f} K</div>
@@ -334,7 +420,7 @@ if st.session_state.files:
         <div class="kpi-zh">温度范围</div>
       </div>
       <div class="kpi">
-        <div class="kpi-val">{n_ok} / {len(files)}</div>
+        <div class="kpi-val">{n_ok} / {n_avg}</div>
         <div class="kpi-lbl">Fits Completed</div>
         <div class="kpi-zh">拟合完成数</div>
       </div>
@@ -568,7 +654,8 @@ def _export_all_figs(results, dpi):
     return buf.read()
 
 
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+tab0, tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    "⓪ Averaging",
     "① ROI & Fitting",
     "② BCS Analysis",
     "③ Waterfall",
@@ -577,9 +664,82 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "⑥ Export",
 ])
 
-files = st.session_state.files
+# Use averaged files for all downstream analysis
+files = st.session_state.averaged_files or st.session_state.files
+raw_files = st.session_state.files
 
 # ─────────────────────────────────────────────────
+# TAB 0 — Averaging
+# ─────────────────────────────────────────────────
+with tab0:
+    sec("Temperature Averaging", "按温度分组平均 · 同温度多次扫描取均值后用于后续分析")
+
+    _raw = st.session_state.files
+    _avg = st.session_state.averaged_files or _raw
+    _grp = getattr(st.session_state, 'avg_group_info', None) or {}
+
+    # ── Grouping summary table ──
+    grp_rows = []
+    for d in _avg:
+        src = d.get('source_files', [d['filename']])
+        grp_rows.append({
+            'Temperature (K)': f"{d['temperature']:.1f}",
+            '# Scans': d.get('n_averaged', 1),
+            'Source Files': ', '.join(src),
+            'Freq Points': len(d['freq']),
+        })
+    grp_df = pd.DataFrame(grp_rows)
+    st.dataframe(grp_df, use_container_width=True, hide_index=True)
+    zh(f"共 {len(_raw)} 个原始文件 → 按温度分组平均后得到 {len(_avg)} 组数据")
+
+    # ── Overlay: individual scans + average ──
+    st.divider()
+    sec("Averaging Detail  平均详情", "选择一个温度查看各扫描与平均结果")
+
+    multi_groups = [d for d in _avg if d.get('n_averaged', 1) > 1]
+    if multi_groups:
+        sel_temp = st.selectbox(
+            "Select temperature group / 选择温度组",
+            range(len(multi_groups)),
+            format_func=lambda i: (
+                f"{multi_groups[i]['temperature']:.1f} K  "
+                f"({multi_groups[i].get('n_averaged',1)} scans)")
+        )
+        grp = multi_groups[sel_temp]
+        src_names = grp.get('source_files', [])
+
+        fig_avg = plotly_fig(380,
+            f"Averaging: {grp['temperature']:.1f} K  "
+            f"({len(src_names)} scans)")
+
+        # Plot individual scans (thin, grey)
+        colors_ind = get_colors(len(src_names))
+        for j, sname in enumerate(src_names):
+            raw_d = next((f for f in _raw if f['filename'] == sname), None)
+            if raw_d is not None:
+                fig_avg.add_trace(go.Scatter(
+                    x=raw_d['freq'], y=raw_d['amp'],
+                    mode='lines',
+                    name=sname,
+                    line=dict(color=colors_ind[j], width=0.8),
+                    opacity=0.5,
+                ))
+
+        # Plot averaged curve (bold red)
+        fig_avg.add_trace(go.Scatter(
+            x=grp['freq'], y=grp['amp'],
+            mode='lines',
+            name=f'Average ({len(src_names)} scans)',
+            line=dict(color='#c0392b', width=2.5),
+        ))
+
+        fig_avg.update_xaxes(title_text='Frequency (THz)')
+        fig_avg.update_yaxes(title_text='Amplitude (a.u.)')
+        st.plotly_chart(fig_avg, use_container_width=True)
+        zh("细线：各次扫描的原始数据 · 粗红线：平均后的数据 · 平均前插值到公共频率格点")
+    else:
+        st.info("No temperatures have multiple scans to average.  "
+                "没有温度有多次扫描需要平均。每个温度只有一个文件。")
 # TAB 1 — ROI & Fano fitting
 # ─────────────────────────────────────────────────
 with tab1:
@@ -1025,8 +1185,9 @@ with tab4:
     st.session_state.diel = diel_rs
     diel_rs.sort(key=lambda x: x['temp'])
     nd = len(diel_rs)
-    step_d = max(1, nd//12)
-    subset = diel_rs[::step_d]
+
+    # Show all temperatures (no subsampling)
+    subset = diel_rs
     colors_d = temp_cmap(len(subset))
 
     f_lo_d, f_hi_d = st.slider("Frequency range (THz)  频率范围",
