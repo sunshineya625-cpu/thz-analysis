@@ -237,7 +237,14 @@ with st.sidebar:
                        ["Auto-optimize 自动", "Fixed 手动固定"])
     tc_fixed = None
     if "Fixed" in tc_mode:
-        tc_fixed = st.slider("T_c (K)", 280.0, 380.0, 328.0, 0.5)
+        _tc_c1, _tc_c2 = st.columns([2, 1])
+        with _tc_c1:
+            tc_fixed = st.slider("T_c (K)", 280.0, 380.0,
+                                 st.session_state.get('_tc_val', 328.0), 0.5,
+                                 key='_tc_slider')
+        with _tc_c2:
+            tc_fixed = st.number_input("T_c", 280.0, 380.0, tc_fixed, 0.5,
+                                       key='_tc_num', label_visibility='collapsed')
 
     st.markdown('<div class="sidebar-section">📎 Reference / Substrate · 参考基底</div>',
                 unsafe_allow_html=True)
@@ -844,10 +851,28 @@ with tab1:
         aa  = sel['amp'].astype(float)
         flo, fhi = float(fa.min()), float(fa.max())
 
-        roi_l = st.slider("Left boundary (THz)  左边界",
-                          flo, fhi, float(np.clip(0.80,flo,fhi)), 0.005)
-        roi_r = st.slider("Right boundary (THz)  右边界",
-                          flo, fhi, float(np.clip(1.30,flo,fhi)), 0.005)
+        st.caption("Left boundary (THz) 左边界")
+        _rl1, _rl2 = st.columns([2, 1])
+        with _rl1:
+            roi_l = st.slider("Left THz", flo, fhi,
+                              float(np.clip(0.80, flo, fhi)), 0.005,
+                              key='roi_l_slider', label_visibility='collapsed')
+        with _rl2:
+            roi_l = st.number_input("Left", flo, fhi, roi_l, 0.005,
+                                    format="%.3f", key='roi_l_num',
+                                    label_visibility='collapsed')
+
+        st.caption("Right boundary (THz) 右边界")
+        _rr1, _rr2 = st.columns([2, 1])
+        with _rr1:
+            roi_r = st.slider("Right THz", flo, fhi,
+                              float(np.clip(1.30, flo, fhi)), 0.005,
+                              key='roi_r_slider', label_visibility='collapsed')
+        with _rr2:
+            roi_r = st.number_input("Right", flo, fhi, roi_r, 0.005,
+                                    format="%.3f", key='roi_r_num',
+                                    label_visibility='collapsed')
+
         if roi_l >= roi_r:
             st.error("Left boundary must be < right boundary")
         st.session_state.roi = (roi_l, roi_r)
@@ -1091,16 +1116,35 @@ with tab3:
 
     ctl1, ctl2, ctl3 = st.columns(3)
     with ctl1:
-        offset_mult = st.slider("Vertical offset  纵向偏移系数",
-                                0.5, 5.0, 1.8, 0.1)
+        st.caption("Vertical offset 纵向偏移系数")
+        _wo1, _wo2 = st.columns([2, 1])
+        with _wo1:
+            offset_mult = st.slider("Offset", 0.5, 5.0, 1.8, 0.1,
+                                    key='wf_off_s', label_visibility='collapsed')
+        with _wo2:
+            offset_mult = st.number_input("Offset", 0.5, 5.0, offset_mult, 0.1,
+                                          key='wf_off_n', label_visibility='collapsed')
         x_lo = st.number_input("x min (THz)", value=0.60, step=0.05)
         x_hi = st.number_input("x max (THz)", value=1.60, step=0.05)
     with ctl2:
         show_fit_wf = st.checkbox("Overlay Fano fit  叠加拟合曲线", False)
-        n_label     = st.slider("Label every N curves  每N条标温度",
-                                1, 5, 2)
+        st.caption("Label every N curves 每N条标温度")
+        _nl1, _nl2 = st.columns([2, 1])
+        with _nl1:
+            n_label = st.slider("N", 1, 5, 2, key='nl_s',
+                                label_visibility='collapsed')
+        with _nl2:
+            n_label = st.number_input("N", 1, 5, n_label, 1,
+                                      key='nl_n', label_visibility='collapsed')
     with ctl3:
-        wf_height   = st.slider("Plot height (px)  图高", 400, 1000, 650, 50)
+        st.caption("Plot height (px) 图高")
+        _ph1, _ph2 = st.columns([2, 1])
+        with _ph1:
+            wf_height = st.slider("H", 400, 1000, 650, 50,
+                                  key='wfh_s', label_visibility='collapsed')
+        with _ph2:
+            wf_height = st.number_input("H", 400, 1000, wf_height, 50,
+                                        key='wfh_n', label_visibility='collapsed')
 
     ok_items = sorted(
         [(k,v) for k,v in st.session_state.results.items() if v],
@@ -1222,8 +1266,17 @@ with tab4:
     subset = diel_rs
     colors_d = temp_cmap(len(subset))
 
-    f_lo_d, f_hi_d = st.slider("Frequency range (THz)  频率范围",
-                                0.3, 4.0, (0.5, 2.8), 0.05)
+    st.caption("Frequency range (THz) 频率范围")
+    _fd1, _fd2, _fd3 = st.columns([1, 2, 1])
+    with _fd1:
+        f_lo_d = st.number_input("f_lo", 0.3, 4.0, 0.5, 0.05,
+                                  format="%.2f", key='diel_flo')
+    with _fd2:
+        f_lo_d, f_hi_d = st.slider("Freq", 0.3, 4.0, (f_lo_d, 2.8), 0.05,
+                                    key='diel_fs', label_visibility='collapsed')
+    with _fd3:
+        f_hi_d = st.number_input("f_hi", 0.3, 4.0, f_hi_d, 0.05,
+                                  format="%.2f", key='diel_fhi')
 
     fig_d = make_subplots(rows=2, cols=2, horizontal_spacing=0.12,
                           vertical_spacing=0.14,
