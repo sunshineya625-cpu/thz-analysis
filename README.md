@@ -1,4 +1,4 @@
-# THz Spectroscopy Analysis Studio v3.0
+# THz Spectroscopy Analysis Studio v3.1
 
 **Publication-quality THz data analysis · Science/Nature figure standards**
 
@@ -119,7 +119,7 @@ https://abc123.ngrok.io
 3. **Waterfall** — Temperature evolution
 4. **Dielectric** — n, k, ε₁, ε₂
 5. **Peak Detail** — Single-temperature view
-6. **Export** — Excel, PDF report, figure pack
+6. **Export** — Excel, PDF report, figure pack, **formula documentation**
 
 ### Bilingual UI / 双语界面
 - English primary interface
@@ -165,8 +165,8 @@ https://abc123.ngrok.io
 If you use this software in your research, please cite:
 
 ```
-THz Spectroscopy Analysis Studio v3.0
-https://github.com/[your-username]/thz-analysis
+THz Spectroscopy Analysis Studio v3.1
+https://github.com/sunshineya625-cpu/thz-analysis
 ```
 
 ---
@@ -202,6 +202,6 @@ https://github.com/[your-username]/thz-analysis/issues
 
 ---
 
-**Version**: 3.0  
-**Last updated**: 2026-02-17  
+**Version**: 3.1  
+**Last updated**: 2026-02-18  
 **License**: MIT
