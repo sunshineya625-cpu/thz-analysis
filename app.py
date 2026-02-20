@@ -215,7 +215,7 @@ with st.sidebar:
     uploaded = st.file_uploader(
         "Upload THz data files (.txt)",
         type=["txt"], accept_multiple_files=True,
-        help="Filename or header must contain temperature, e.g. '300K'\n"
+        help="Filename or header must contain temperature, e.g. '300K'\\n"
              "文件名或表头需含温度，如 300K")
 
     st.markdown('<div class="sidebar-section">⚙️ Processing · 处理参数</div>',
@@ -224,7 +224,7 @@ with st.sidebar:
         "Amplitude column / 振幅列",
         ["AMP FD (col 5)", "AMP dB (col 6)"],
         index=0,
-        help="Choose which amplitude column to use for analysis.\n"
+        help="Choose which amplitude column to use for analysis.\\n"
              "选择用于分析的振幅列：FD（线性）或 dB（对数）",
     )
     use_db = "dB" in amp_col_choice
@@ -251,7 +251,7 @@ with st.sidebar:
     ref_uploaded = st.file_uploader(
         "Upload reference file (.txt)  上传参考(基底)文件",
         type=["txt"], accept_multiple_files=False,
-        help="Reference/substrate measurement for dielectric calculation.\n"
+        help="Reference/substrate measurement for dielectric calculation.\\n"
              "介电计算所需的参考/基底测量数据。此文件不会参与Fano/BCS分析。",
         key="ref_uploader")
 
@@ -278,7 +278,7 @@ with st.sidebar:
         thickness = st.number_input("Sample thickness (mm) 样品厚度",
                                     0.01, 20.0, 0.5, 0.01)
         if not st.session_state.ref_data:
-            st.warning("⚠️ Upload a reference file above for dielectric.\n"
+            st.warning("⚠️ Upload a reference file above for dielectric.\\n"
                        "请在上方上传参考文件以启用介电计算。")
     ref_name = st.session_state.ref_name
 
@@ -585,7 +585,7 @@ def _make_pdf_report(df, results, tc_fixed_val, dpi):
             ax.plot(fx[m], sy[m]+off, color=c, lw=0.9)
             if i%(max(1,n_c//10))==0:
                 ax.text(1.61, float(sy[m][-1])+off if m.any() else off,
-                        f'{r["Temperature_K"]:.0f} K',
+                        f"{r[\"Temperature_K\"]:.0f} K",
                         fontsize=5.5, color=c, va='center')
         ax.set_xlabel('Frequency (THz)')
         ax.set_ylabel('Intensity (arb. u., offset)')
@@ -606,7 +606,7 @@ def _make_pdf_report(df, results, tc_fixed_val, dpi):
         fig, axes = plt.subplots(nrows, ncols,
                                  figsize=(7.0, nrows*2.4))
         axes = axes.flatten()
-        for i,(_,r) in enumerate(sel_fits):
+        for i,(_, r) in enumerate(sel_fits):
             ax = axes[i]
             ax.fill_between(r['freq_roi'],0,r['signal'],
                             color='#2c6ea5',alpha=0.12)
@@ -881,7 +881,7 @@ with tab1:
             st.error("Left boundary must be < right boundary")
         st.session_state.roi = (roi_l, roi_r)
 
-        do_fit = st.button("▶  Run batch Fano fitting\n批量拟合",
+        do_fit = st.button("▶  Run batch Fano fitting\\n批量拟合",
                            type="primary", use_container_width=True)
 
     with col_plot:
@@ -927,6 +927,36 @@ with tab1:
             fig.update_layout(legend=dict(title="Temperature",
                                           orientation='v', x=1.01))
             st.plotly_chart(fig, use_container_width=True)
+
+            # --- Export Overlay Data ---
+            dfs = []
+            for d in files:
+                df_temp = pd.DataFrame({
+                    'Frequency (THz)': d['freq'],
+                    f'Amplitude_{d["temperature"]:.0f}K': d['amp']
+                })
+                dfs.append(df_temp)
+
+            # Merge all dataframes on Frequency
+            df_export = dfs[0]
+            for i in range(1, len(dfs)):
+                df_export = pd.merge(df_export, dfs[i], on='Frequency (THz)', how='outer')
+
+            df_export.sort_values(by='Frequency (THz)', inplace=True)
+
+            output = io.BytesIO()
+            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                df_export.to_excel(writer, index=False, sheet_name='Overlay Spectra')
+                writer.close()
+
+            st.download_button(
+                label="📥 Export Overlay Spectra to Excel",
+                data=output.getvalue(),
+                file_name="overlay_spectra.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
+
             zh(f"颜色：蓝→低温，红→高温 · 共 {n_files} 条曲线 · "
                "阴影区域为选定的 ROI 范围")
 
@@ -1145,9 +1175,9 @@ with tab3:
         st.markdown(WATERFALL_EXPLANATION)
         st.markdown("---")
         st.markdown(
-            "**Parameters / 参数**\n\n"
-            "- **i**: curve index (sorted by temperature) / 曲线索引（按温度排序）\n"
-            "- **median(peak heights)**: auto-calculated from fitting results / 自动从拟合结果计算\n"
+            "**Parameters / 参数**\\n\\n"
+            "- **i**: curve index (sorted by temperature) / 曲线索引（按温度排序）\\n"
+            "- **median(peak heights)**: auto-calculated from fitting results / 自动从拟合结果计算\\n"
             "- **m**: user-adjustable multiplier (slider below) / 用户可调乘子（下方滑块）"
         )
 
