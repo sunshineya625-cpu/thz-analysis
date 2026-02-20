@@ -585,7 +585,7 @@ def _make_pdf_report(df, results, tc_fixed_val, dpi):
             ax.plot(fx[m], sy[m]+off, color=c, lw=0.9)
             if i%(max(1,n_c//10))==0:
                 ax.text(1.61, float(sy[m][-1])+off if m.any() else off,
-                        f"{r[\"Temperature_K\"]:.0f} K",
+                        f"{r['Temperature_K']:.0f} K",
                         fontsize=5.5, color=c, va='center')
         ax.set_xlabel('Frequency (THz)')
         ax.set_ylabel('Intensity (arb. u., offset)')
