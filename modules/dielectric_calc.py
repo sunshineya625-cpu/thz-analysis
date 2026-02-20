@@ -27,7 +27,8 @@ class DielectricCalculator:
                 n_len = min(len(t_r), len(s['time']))
                 S_s = fft(s['E_field'][:n_len], n=npad)
                 H = S_s[pos] / S_r_pos
-                # gain limit
+
+                # Gain limit (using percentile for robustness)
                 amp_H = np.abs(H)
                 freq_mask = (freq_pos >= 0.5) & (freq_pos <= 2.5)
                 if freq_mask.any():
@@ -53,13 +54,20 @@ class DielectricCalculator:
         omega = 2 * np.pi * freq
         amp = np.abs(H)
         phi = np.unwrap(np.angle(H))
-        mf = (freq > 0.5) & (freq < 1.0)
-        if mf.any():
-            poly = np.polyfit(freq[mf], phi[mf], 1)
-            phi -= round(poly[1] / (2 * np.pi)) * 2 * np.pi
 
-        # NOTE: The formula for 'n' was previously incorrect (1 - ...), it has been corrected to (1 + ...)
-        # to match the theoretical formula provided in the UI.
+        # --- POTENTIAL ISSUE FOR 70K DATA ---
+        # This block attempts to correct for a 2*pi phase offset by fitting
+        # a line to the 0.5-1.0 THz region. If this region is noisy for a
+        # specific file (like 70K), the fit can be wrong, corrupting the
+        # entire phase.
+        # Let's disable it to test this hypothesis.
+        #
+        # mf    = (freq > 0.5) & (freq < 1.0)
+        # if mf.any():
+        #     poly = np.polyfit(freq[mf], phi[mf], 1)
+        #     phi -= round(poly[1] / (2*np.pi)) * 2*np.pi
+
+        # Corrected formula for refractive index 'n'
         n = 1 + self.c * phi / (omega * self.d)
 
         F = (4 * n) / (n + 1) ** 2
