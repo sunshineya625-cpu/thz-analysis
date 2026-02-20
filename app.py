@@ -945,9 +945,8 @@ with tab1:
             df_export.sort_values(by='Frequency (THz)', inplace=True)
 
             output = io.BytesIO()
-            with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 df_export.to_excel(writer, index=False, sheet_name='Overlay Spectra')
-                writer.close()
 
             st.download_button(
                 label="📥 Export Overlay Spectra to Excel",
