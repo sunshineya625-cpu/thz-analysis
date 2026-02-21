@@ -1,75 +1,97 @@
-import re
 import numpy as np
+from scipy.fft import fft, fftfreq
+from scipy.signal import savgol_filter
+import sys  # Using sys to print errors to stderr for better visibility in logs
 
 
-class DataLoader:
-    def load_file(self, file_obj):
-        filename = file_obj.name
-        raw = file_obj.read()
-        # decode
-        content = raw.decode('utf-8', errors='ignore')
-        lines = content.splitlines()
+class DielectricCalculator:
+    def __init__(self, thickness=0.5):
+        self.d = thickness  # mm
+        self.c = 0.29979  # mm/ps
 
-        temperature = self._extract_temperature(content, filename)
+    def calculate_all(self, ref_data, sample_list, smooth=5):
+        t_r = ref_data['time']
+        E_r = ref_data['E_field']
 
-        # Find the data block start
-        header_row = 15  # default
-        for i, ln in enumerate(lines):
-            if 'Pos. [um]' in ln or ('Freq' in ln and 'Amp' in ln):
-                header_row = i + 1
-                break
+        if len(t_r) < 2:
+            print("DIAGNOSTIC_ERROR: Reference data 'time' array is too short.", file=sys.stderr)
+            return []
 
-        data_lines = lines[header_row:]
-        rows = []
-        for ln in data_lines:
-            ln = ln.strip()
-            if not ln:
+        dt = t_r[1] - t_r[0]
+        if dt <= 0:
+            print(f"DIAGNOSTIC_ERROR: Invalid time step '{dt}' in reference data.", file=sys.stderr)
+            return []
+
+        npad = len(t_r) * 4
+        freq = fftfreq(npad, d=dt)
+        S_r = fft(E_r, n=npad)
+        pos = freq > 0
+        freq_pos = freq[pos]
+        S_r_pos = S_r[pos]
+
+        results = []
+        for s in sample_list:
+            fname = s.get('filename', 'N/A')
+            temp = s.get('temperature', 'N/A')
+            if fname == ref_data.get('filename'):
                 continue
+
             try:
-                vals = [float(x) for x in ln.split()]
-                if len(vals) >= 5:
-                    rows.append(vals)
-            except ValueError:
+                n_len = min(len(t_r), len(s.get('time', [])))
+                if n_len < 2:
+                    print(
+                        f"DIAGNOSTIC_WARNING: Skipping {fname} due to insufficient time-domain data (points: {n_len}).",
+                        file=sys.stderr)
+                    continue
+
+                S_s = fft(s['E_field'][:n_len], n=npad)
+
+                epsilon = 1e-15
+                H = S_s[pos] / (S_r_pos + epsilon)
+
+                amp_H = np.abs(H)
+                freq_mask = (freq_pos >= 0.5) & (freq_pos <= 2.5)
+                if freq_mask.any():
+                    mx = np.percentile(amp_H[freq_mask], 99.9)
+                    if mx > 0.95:
+                        H *= 0.95 / mx
+
+                n, k, e1, e2 = self._params(freq_pos, H)
+
+                if smooth > 1:
+                    for arr in [n, k, e1, e2]:
+                        if arr is not None and np.any(np.isfinite(arr)):
+                            try:
+                                arr[:] = savgol_filter(arr, int(smooth), 3)
+                            except Exception as sav_e:
+                                print(f"DIAGNOSTIC_WARNING: savgol_filter failed for {fname}: {sav_e}", file=sys.stderr)
+
+                results.append({'temp': temp, 'freq': freq_pos, 'n': n, 'k': k, 'e1': e1, 'e2': e2})
+
+            except Exception as e:
+                print(f"DIAGNOSTIC_ERROR: Processing file {fname} at {temp}K failed: {repr(e)}", file=sys.stderr)
                 continue
+        return results
 
-        if not rows:
-            raise ValueError(f"No data found in {filename} (tried skip_header={header_row})")
+    def _params(self, freq, H):
+        omega = 2 * np.pi * freq
+        omega[omega == 0] = 1e-12
 
-        arr = np.array(rows)
+        amp = np.abs(H)
+        phi = np.unwrap(np.angle(H))
 
-        # --- CRITICAL FIX: SEPARATE DOMAIN PROCESSING ---
+        n = 1 + self.c * phi / (omega * self.d)
 
-        # 1. Process Time-Domain data: Keep it complete and unfiltered
-        time_full = arr[:, 1].astype(float)
-        E_field_full = arr[:, 2].astype(float)
+        n_plus_1_is_zero = (n == -1)
+        n[n_plus_1_is_zero] = -1 + 1e-9
 
-        # 2. Process Frequency-Domain data with filtering
-        freq = arr[:, 3].astype(float)
-        amp = arr[:, 4].astype(float)
-        amp_db = arr[:, 5].astype(float) if arr.shape[1] >= 6 else amp.copy()
+        F = (4 * n) / ((n + 1) ** 2)
+        F_is_zero = (F == 0)
+        F[F_is_zero] = 1e-9
 
-        # The mask should ONLY be applied to frequency-domain arrays
-        mask = (freq > 0) & (amp > 1e-6)
+        t = amp / F
+        t[t < 0] = 1e-10
 
-        return {
-            'filename': filename,
-            'temperature': temperature,
-            # Return complete, unfiltered time-domain data
-            'time': time_full,
-            'E_field': E_field_full,
-            # Return filtered frequency-domain data
-            'freq': freq[mask],
-            'amp': amp[mask],
-            'amp_db': amp_db[mask],
-        }
-
-    def _extract_temperature(self, content, filename):
-        for line in content.splitlines()[:15]:
-            if 'description' in line.lower():
-                m = re.search(r'(\d+(?:\.\d+)?)\s*[Kk]', line, re.IGNORECASE)
-                if m:
-                    return float(m.group(1))
-        m = re.search(r'(\d+(?:\.\d+)?)\s*[Kk]', filename, re.IGNORECASE)
-        if m:
-            return float(m.group(1))
-        return -1.0
+        k = -(self.c / (omega * self.d)) * np.log(np.clip(t, 1e-10, 1.0))
+        k[k < 0] = 0
+        return n, k, n ** 2 - k ** 2, 2 * n * k
