@@ -35,7 +35,21 @@ class DataLoader:
 
         arr = np.array(rows)
         
+        # Extract start position for delay stage correction
+        start_pos = 0.0
+        for line in lines[:15]:
+            if line.startswith('Start Position'):
+                try: 
+                    start_pos = float(line.split('Position')[1].strip())
+                except: pass
+
         time_full    = arr[:, 1].astype(float)
+        
+        # Compensate for delay stage mechanical shift if present
+        # Δtime = Δpos / c. Using c = 299.79 um/ps. addition aligns the data in absolute time
+        if start_pos != 0.0:
+            time_full = time_full + (start_pos / 299.792458)
+            
         E_field_full = arr[:, 2].astype(float)
         freq         = arr[:, 3].astype(float)
         amp          = arr[:, 4].astype(float)
@@ -51,6 +65,7 @@ class DataLoader:
         return {
             'filename':    filename,
             'temperature': temperature,
+            'start_pos':   start_pos,
             'time':        time_full,
             'E_field':     E_field_full,
             'freq':        freq_masked,

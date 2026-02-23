@@ -44,19 +44,50 @@ class DielectricCalculator:
                         file=sys.stderr)
                     continue
 
-                S_s = fft(s['E_field'][:n_len], n=npad)
+                E_s_arr = s['E_field'][:n_len]
+                t_s_arr = s.get('time', [])
 
+                # 1. To prevent phase unwrapping failure (phase jumps > pi),
+                # we mathematically align the sample pulse to the reference pulse.
+                idx_peak_r = np.argmax(np.abs(E_r))
+                idx_peak_s = np.argmax(np.abs(E_s_arr))
+                shift_idx = idx_peak_s - idx_peak_r
+                
+                # Shift sample array by shift_idx (pad with 0)
+                E_s_aligned = np.zeros_like(E_s_arr)
+                if shift_idx > 0:
+                    E_s_aligned[:-shift_idx] = E_s_arr[shift_idx:]
+                elif shift_idx < 0:
+                    E_s_aligned[-shift_idx:] = E_s_arr[:shift_idx]
+                else:
+                    E_s_aligned[:] = E_s_arr[:]
+
+                S_s_aligned = fft(E_s_aligned, n=npad)
                 epsilon = 1e-15
-                H = S_s[pos] / (S_r_pos + epsilon)
+                H_aligned = S_s_aligned[pos] / (S_r_pos + epsilon)
 
-                amp_H = np.abs(H)
+                amp_H = np.abs(H_aligned)
                 freq_mask = (freq_pos >= 0.5) & (freq_pos <= 2.5)
                 if freq_mask.any():
                     mx = np.percentile(amp_H[freq_mask], 99.9)
                     if mx > 0.95:
-                        H *= 0.95 / mx
+                        amp_H *= 0.95 / mx
+                
+                # 2. Extract safe unwrapped phase from aligned signals
+                phi_aligned = np.unwrap(np.angle(H_aligned))
+                
+                # 3. Add back the mathematical array shift in frequency domain
+                omega = 2 * np.pi * freq_pos
+                tau_array_shift = shift_idx * dt
+                phi_true = phi_aligned - omega * tau_array_shift
 
-                n, k, e1, e2 = self._params(freq_pos, H)
+                # 4. Compensate for mechanical time delay stage (from data_loader)
+                if len(t_s_arr) > 0 and len(t_r) > 0:
+                    tau_stage = t_s_arr[0] - t_r[0]
+                    phi_true = phi_true - omega * tau_stage
+                    
+                # Calculate optical constants using reconstructed phi_true and amp_H
+                n, k, e1, e2 = self._params(freq_pos, amp_H, phi_true)
 
                 if smooth > 1:
                     for arr in [n, k, e1, e2]:
@@ -73,14 +104,18 @@ class DielectricCalculator:
                 continue
         return results
 
-    def _params(self, freq, H):
+    def _params(self, freq, amp, phi):
         omega = 2 * np.pi * freq
         omega[omega == 0] = 1e-12
 
-        amp = np.abs(H)
-        phi = np.unwrap(np.angle(H))
-
-        n = 1 + self.c * phi / (omega * self.d)
+        # -------------------------------------------------------------
+        # CRUCIAL PHYSICS FIX: 
+        # For a standard forward FFT (using e^{-i\omega t} convention), 
+        # a time-delayed sample has a NEGATIVE phase relative to the reference.
+        # Thus, phi = -\omega * (n - 1) * d / c.
+        # Solving for n gives: n = 1 - c * phi / (\omega * d)
+        # -------------------------------------------------------------
+        n = 1 - self.c * phi / (omega * self.d)
 
         n_plus_1_is_zero = (n == -1)
         n[n_plus_1_is_zero] = -1 + 1e-9

@@ -932,17 +932,17 @@ with tab1:
             dfs = []
             for d in files:
                 df_temp = pd.DataFrame({
-                    'Frequency (THz)': d['freq'],
+                    'Freq_Rounded': np.round(d['freq'].astype(float), 4),
                     f'Amplitude_{d["temperature"]:.0f}K': d['amp']
                 })
+                # Drop potential duplicates due to rounding
+                df_temp = df_temp.drop_duplicates(subset=['Freq_Rounded']).set_index('Freq_Rounded')
                 dfs.append(df_temp)
 
-            # Merge all dataframes on Frequency
-            df_export = dfs[0]
-            for i in range(1, len(dfs)):
-                df_export = pd.merge(df_export, dfs[i], on='Frequency (THz)', how='outer')
-
-            df_export.sort_values(by='Frequency (THz)', inplace=True)
+            # Concatenate all dataframes along columns based on the rounded frequency index
+            df_export = pd.concat(dfs, axis=1).sort_index()
+            df_export.index.name = 'Frequency (THz)'
+            df_export.reset_index(inplace=True)
 
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
