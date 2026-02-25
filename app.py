@@ -1,5 +1,5 @@
 """
-THz Spectroscopy Analysis Studio  v3.2
+THz Spectroscopy Analysis Studio  v3.3
 Publication-quality · Bilingual UI (EN primary, ZH annotations)
 Science / Nature journal figure standards
 """
@@ -45,7 +45,7 @@ apply_nature_style()
 # PAGE CONFIG & DESIGN SYSTEM
 # ══════════════════════════════════════════════════════════════
 st.set_page_config(
-    page_title="THz Analysis Studio v3.2",
+    page_title="THz Analysis Studio v3.3",
     page_icon="🔬",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -318,7 +318,7 @@ with st.sidebar:
 # ══════════════════════════════════════════════════════════════
 st.markdown("""
 <div class="masthead">
-  <div class="masthead-title">THz Spectroscopy Analysis Studio <span style="font-size:0.6em;color:#5a7898;">v3.2</span></div>
+  <div class="masthead-title">THz Spectroscopy Analysis Studio <span style="font-size:0.6em;color:#5a7898;">v3.3</span></div>
   <div class="masthead-sub">Temperature-Dependent Phonon Mode Analysis · Fano Resonance · BCS Order Parameter</div>
   <div class="masthead-zh">太赫兹光谱分析工作站 · 声子模式 · Fano共振 · BCS序参量</div>
 </div>
@@ -736,11 +736,15 @@ else:
 # TAB 0 — Averaging
 # ─────────────────────────────────────────────────
 with tab0:
-    sec("Temperature Averaging", "按温度分组平均 · 同温度多次扫描取均值后用于后续分析")
+    sec("Temperature Averaging", "按温度分组平均 · 可排除异常扫描后重新平均")
 
     _raw = st.session_state.files
     _avg = st.session_state.averaged_files or _raw
     _grp = getattr(st.session_state, 'avg_group_info', None) or {}
+
+    # Initialize excluded scans set
+    if 'excluded_scans' not in st.session_state:
+        st.session_state.excluded_scans = set()
 
     # ── Grouping summary table ──
     grp_rows = []
@@ -754,53 +758,124 @@ with tab0:
         })
     grp_df = pd.DataFrame(grp_rows)
     st.dataframe(grp_df, use_container_width=True, hide_index=True)
-    zh(f"共 {len(_raw)} 个原始文件 → 按温度分组平均后得到 {len(_avg)} 组数据")
 
-    # ── Overlay: individual scans + average ──
+    n_excluded = len(st.session_state.excluded_scans)
+    info_txt = f"共 {len(_raw)} 个原始文件 → 按温度分组平均后得到 {len(_avg)} 组数据"
+    if n_excluded > 0:
+        info_txt += f" · 已排除 {n_excluded} 个扫描"
+    zh(info_txt)
+
+    # ── Scan selection & exclusion ──
     st.divider()
-    sec("Averaging Detail  平均详情", "选择一个温度查看各扫描与平均结果")
+    sec("Scan Selection  扫描选择", "取消勾选要排除的扫描，然后点击「重新平均」")
 
-    multi_groups = [d for d in _avg if d.get('n_averaged', 1) > 1]
-    if multi_groups:
-        sel_temp = st.selectbox(
-            "Select temperature group / 选择温度组",
-            range(len(multi_groups)),
-            format_func=lambda i: (
-                f"{multi_groups[i]['temperature']:.1f} K  "
-                f"({multi_groups[i].get('n_averaged',1)} scans)")
-        )
-        grp = multi_groups[sel_temp]
-        src_names = grp.get('source_files', [])
+    # Group raw files by temperature (same logic as average_by_temperature)
+    from collections import defaultdict
+    sorted_raw = sorted(_raw, key=lambda d: d['temperature'])
+    temp_groups = []
+    for d in sorted_raw:
+        matched = False
+        for g in temp_groups:
+            if abs(d['temperature'] - g[0]) <= 1.0:
+                g[1].append(d)
+                matched = True
+                break
+        if not matched:
+            temp_groups.append((d['temperature'], [d]))
 
-        fig_avg = plotly_fig(380,
-            f"Averaging: {grp['temperature']:.1f} K  "
-            f"({len(src_names)} scans)")
+    multi_temp_groups = [(t, members) for t, members in temp_groups if len(members) > 1]
 
-        # Plot individual scans (thin, grey)
-        colors_ind = get_colors(len(src_names))
-        for j, sname in enumerate(src_names):
-            raw_d = next((f for f in _raw if f['filename'] == sname), None)
-            if raw_d is not None:
-                fig_avg.add_trace(go.Scatter(
-                    x=raw_d['freq'], y=raw_d['amp'],
+    if multi_temp_groups:
+        # Show each temperature group with checkboxes
+        for g_idx, (rep_temp, members) in enumerate(multi_temp_groups):
+            mean_t = np.mean([m['temperature'] for m in members])
+            st.markdown(f"**{mean_t:.1f} K** — {len(members)} scans")
+
+            # Plot all scans in this group
+            colors_grp = get_colors(len(members))
+            fig_grp = plotly_fig(320,
+                f"{mean_t:.1f} K — select scans to keep  选择要保留的扫描")
+
+            kept_count = 0
+            scan_cols = st.columns(min(len(members), 4))
+            for j, m in enumerate(members):
+                fname = m['filename']
+                is_excluded = fname in st.session_state.excluded_scans
+                col_idx = j % len(scan_cols)
+                with scan_cols[col_idx]:
+                    keep = st.checkbox(
+                        f"✓ {fname}",
+                        value=not is_excluded,
+                        key=f"scan_{g_idx}_{j}_{fname}",
+                    )
+                    if not keep:
+                        st.session_state.excluded_scans.add(fname)
+                    else:
+                        st.session_state.excluded_scans.discard(fname)
+
+                # Plot this scan
+                opacity = 0.2 if fname in st.session_state.excluded_scans else 0.8
+                lw = 0.6 if fname in st.session_state.excluded_scans else 1.4
+                dash = 'dot' if fname in st.session_state.excluded_scans else 'solid'
+                fig_grp.add_trace(go.Scatter(
+                    x=m['freq'], y=m['amp'],
                     mode='lines',
-                    name=sname,
-                    line=dict(color=colors_ind[j], width=0.8),
-                    opacity=0.5,
+                    name=f"{'❌ ' if fname in st.session_state.excluded_scans else ''}{fname}",
+                    line=dict(color=colors_grp[j], width=lw, dash=dash),
+                    opacity=opacity,
+                ))
+                if fname not in st.session_state.excluded_scans:
+                    kept_count += 1
+
+            # If there's a current average, overlay it
+            avg_d = next((a for a in _avg
+                          if abs(a['temperature'] - mean_t) <= 1.0
+                          and a.get('n_averaged', 1) > 1), None)
+            if avg_d is not None:
+                fig_grp.add_trace(go.Scatter(
+                    x=avg_d['freq'], y=avg_d['amp'],
+                    mode='lines',
+                    name=f'Current average ({avg_d.get("n_averaged",1)} scans)',
+                    line=dict(color='#c0392b', width=2.5),
                 ))
 
-        # Plot averaged curve (bold red)
-        fig_avg.add_trace(go.Scatter(
-            x=grp['freq'], y=grp['amp'],
-            mode='lines',
-            name=f'Average ({len(src_names)} scans)',
-            line=dict(color='#c0392b', width=2.5),
-        ))
+            fig_grp.update_xaxes(title_text='Frequency (THz)')
+            fig_grp.update_yaxes(title_text=_amp_label)
+            st.plotly_chart(fig_grp, use_container_width=True)
+            zh(f"保留 {kept_count}/{len(members)} 个扫描 · "
+               f"虚线/半透明 = 已排除 · 粗红线 = 当前平均结果")
+            st.markdown("---")
 
-        fig_avg.update_xaxes(title_text='Frequency (THz)')
-        fig_avg.update_yaxes(title_text=_amp_label)
-        st.plotly_chart(fig_avg, use_container_width=True)
-        zh("细线：各次扫描的原始数据 · 粗红线：平均后的数据 · 平均前插值到公共频率格点")
+        # ── Re-average button ──
+        rea_col1, rea_col2 = st.columns([1, 2])
+        with rea_col1:
+            if st.button("🔄 Re-average with selection  重新平均",
+                         type="primary", use_container_width=True):
+                # Filter out excluded scans and re-average
+                kept_files = [f for f in _raw
+                              if f['filename'] not in st.session_state.excluded_scans]
+                if not kept_files:
+                    st.error("No scans left after exclusion!  排除后没有数据了！")
+                else:
+                    avg_new, grp_new = average_by_temperature(kept_files)
+                    st.session_state.averaged_files = avg_new
+                    st.session_state.avg_group_info = grp_new
+                    # Clear fitting results since data changed
+                    st.session_state.results = {}
+                    st.session_state.df = None
+                    log.info(f"Re-averaged: {len(kept_files)}/{len(_raw)} scans kept, "
+                             f"excluded: {st.session_state.excluded_scans}")
+                    st.rerun()
+        with rea_col2:
+            if st.button("↺ Reset exclusions  重置排除", use_container_width=True):
+                st.session_state.excluded_scans = set()
+                avg_new, grp_new = average_by_temperature(_raw)
+                st.session_state.averaged_files = avg_new
+                st.session_state.avg_group_info = grp_new
+                st.session_state.results = {}
+                st.session_state.df = None
+                log.info("Exclusions reset, re-averaged with all scans")
+                st.rerun()
     else:
         st.info("No temperatures have multiple scans to average.  "
                 "没有温度有多次扫描需要平均。每个温度只有一个文件。")
