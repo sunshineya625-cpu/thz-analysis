@@ -332,6 +332,11 @@ def average_by_temperature(files, tol=1.0):
 
     Returns a list of averaged dicts (same structure as DataLoader output)
     plus a grouping info dict {temp: [filenames]}.
+
+    Fixes applied:
+    - freq/amp sorted before interpolation
+    - np.linspace for stable common grid
+    - validation of overlapping freq ranges
     """
     from collections import defaultdict
 
@@ -372,21 +377,59 @@ def average_by_temperature(files, tol=1.0):
             })
             continue
 
-        # Build common frequency grid (union range, finest resolution)
+        # ── Ensure each member's freq is sorted ──
+        for m in members:
+            sort_idx = np.argsort(m['freq'])
+            m['freq'] = m['freq'][sort_idx]
+            m['amp'] = m['amp'][sort_idx]
+            if 'amp_db' in m and m['amp_db'] is not None:
+                m['amp_db'] = m['amp_db'][sort_idx]
+
+        # ── Build common frequency grid ──
+        # Use the FIRST member's grid as reference to minimize interpolation
+        # Only interpolate others onto this grid (within overlapping range)
+        ref = members[0]
         f_min = max(m['freq'].min() for m in members)
         f_max = min(m['freq'].max() for m in members)
-        steps = [np.median(np.diff(m['freq'])) for m in members
-                 if len(m['freq']) > 1]
-        df = min(steps) if steps else 0.001
-        f_common = np.arange(f_min, f_max, df)
 
-        # Interpolate and average both amplitude columns
+        if f_min >= f_max:
+            # No overlapping range — fall back to first member
+            m = members[0]
+            averaged.append({
+                'filename': f"avg_{mean_temp:.0f}K (NO OVERLAP, using first)",
+                'temperature': mean_temp,
+                'freq': m['freq'].copy(),
+                'amp': m['amp'].copy(),
+                'amp_db': m.get('amp_db', m['amp']).copy(),
+                'time': m.get('time', np.array([])),
+                'E_field': m.get('E_field', np.array([])),
+                'n_averaged': 1,
+                'source_files': fnames,
+            })
+            continue
+
+        # Use reference grid within overlap region
+        ref_mask = (ref['freq'] >= f_min) & (ref['freq'] <= f_max)
+        f_common = ref['freq'][ref_mask]
+
+        if len(f_common) < 2:
+            # Too few points in overlap
+            steps = [np.median(np.abs(np.diff(m['freq']))) for m in members
+                     if len(m['freq']) > 1]
+            df = min(steps) if steps else 0.001
+            n_pts = max(2, int(round((f_max - f_min) / df)))
+            f_common = np.linspace(f_min, f_max, n_pts)
+
+        # ── Interpolate all members onto common grid and average ──
         interp_amps = []
         interp_amps_db = []
         for m in members:
-            interp_amps.append(np.interp(f_common, m['freq'], m['amp']))
+            interp_amps.append(
+                np.interp(f_common, m['freq'], m['amp']))
             db_col = m.get('amp_db', m['amp'])
-            interp_amps_db.append(np.interp(f_common, m['freq'], db_col))
+            interp_amps_db.append(
+                np.interp(f_common, m['freq'], db_col))
+
         avg_amp = np.mean(interp_amps, axis=0)
         avg_amp_db = np.mean(interp_amps_db, axis=0)
 
