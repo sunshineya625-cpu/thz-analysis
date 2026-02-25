@@ -850,7 +850,8 @@ with tab0:
         rea_col1, rea_col2 = st.columns([1, 2])
         with rea_col1:
             if st.button("🔄 Re-average with selection  重新平均",
-                         type="primary", use_container_width=True):
+                         type="primary", use_container_width=True,
+                         key="tab0_reavg_btn"):
                 # Filter out excluded scans and re-average
                 kept_files = [f for f in _raw
                               if f['filename'] not in st.session_state.excluded_scans]
@@ -867,7 +868,8 @@ with tab0:
                              f"excluded: {st.session_state.excluded_scans}")
                     st.rerun()
         with rea_col2:
-            if st.button("↺ Reset exclusions  重置排除", use_container_width=True):
+            if st.button("↺ Reset exclusions  重置排除", use_container_width=True,
+                         key="tab0_reset_btn"):
                 st.session_state.excluded_scans = set()
                 avg_new, grp_new = average_by_temperature(_raw)
                 st.session_state.averaged_files = avg_new
@@ -1078,14 +1080,15 @@ with tab1:
             btn_c1, btn_c2 = st.columns(2)
             with btn_c1:
                 if st.button(
-                    f"🔄 Apply & Re-average  应用并重新平均"
-                    f"{f' ({n_excl} excluded)' if n_excl else ''}",
+                    "🔄 Apply & Re-average  应用并重新平均",
                     type="primary", use_container_width=True,
-                    disabled=(n_excl == 0)):
+                    key="roi_reavg_btn"):
                     kept = [f for f in _all_raw
                             if f['filename'] not in st.session_state.excluded_scans]
                     if not kept:
                         st.error("Cannot exclude all scans!  不能排除所有数据！")
+                    elif n_excl == 0:
+                        st.info("No scans excluded. Nothing to change.  没有排除任何扫描。")
                     else:
                         avg_new, grp_new = average_by_temperature(kept)
                         st.session_state.averaged_files = avg_new
@@ -1098,7 +1101,7 @@ with tab1:
                         st.rerun()
             with btn_c2:
                 if st.button("↺ Reset all  重置", use_container_width=True,
-                             disabled=(n_excl == 0)):
+                             key="roi_reset_btn"):
                     st.session_state.excluded_scans = set()
                     avg_new, grp_new = average_by_temperature(_all_raw)
                     st.session_state.averaged_files = avg_new
