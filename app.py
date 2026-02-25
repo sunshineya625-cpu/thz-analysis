@@ -1,5 +1,5 @@
 """
-THz Spectroscopy Analysis Studio  v3.4
+THz Spectroscopy Analysis Studio  v3.5
 Publication-quality · Bilingual UI (EN primary, ZH annotations)
 Science / Nature journal figure standards
 """
@@ -45,7 +45,7 @@ apply_nature_style()
 # PAGE CONFIG & DESIGN SYSTEM
 # ══════════════════════════════════════════════════════════════
 st.set_page_config(
-    page_title="THz Analysis Studio v3.4",
+    page_title="THz Analysis Studio v3.5",
     page_icon="🔬",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -318,7 +318,7 @@ with st.sidebar:
 # ══════════════════════════════════════════════════════════════
 st.markdown("""
 <div class="masthead">
-  <div class="masthead-title">THz Spectroscopy Analysis Studio <span style="font-size:0.6em;color:#5a7898;">v3.4</span></div>
+  <div class="masthead-title">THz Spectroscopy Analysis Studio <span style="font-size:0.6em;color:#5a7898;">v3.5</span></div>
   <div class="masthead-sub">Temperature-Dependent Phonon Mode Analysis · Fano Resonance · BCS Order Parameter</div>
   <div class="masthead-zh">太赫兹光谱分析工作站 · 声子模式 · Fano共振 · BCS序参量</div>
 </div>
@@ -1050,16 +1050,17 @@ with tab1:
         elif "Raw" in view_mode:
             # ── Raw scans with select/exclude controls ──
             _all_raw = st.session_state.files
+            _plot_raw = raw_files  # use the properly formatted data (Linear or dB) for plotting
             if 'excluded_scans' not in st.session_state:
                 st.session_state.excluded_scans = set()
 
-            n_raw = len(_all_raw)
+            n_raw = len(_plot_raw)
             colors_raw = get_colors(n_raw)
             fig = plotly_fig(500,
                 f"All Raw Scans ({n_raw} files) — "
                 f"uncheck to exclude  取消勾选排除异常扫描")
 
-            for i, d in enumerate(_all_raw):
+            for i, d in enumerate(_plot_raw):
                 fname = d['filename']
                 is_excl = fname in st.session_state.excluded_scans
                 opacity = 0.15 if is_excl else 0.85
