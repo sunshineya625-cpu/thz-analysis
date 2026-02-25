@@ -45,7 +45,7 @@ apply_nature_style()
 # PAGE CONFIG & DESIGN SYSTEM
 # ══════════════════════════════════════════════════════════════
 st.set_page_config(
-    page_title="THz Analysis Studio",
+    page_title="THz Analysis Studio v3.1",
     page_icon="🔬",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -315,7 +315,7 @@ with st.sidebar:
 # ══════════════════════════════════════════════════════════════
 st.markdown("""
 <div class="masthead">
-  <div class="masthead-title">THz Spectroscopy Analysis Studio</div>
+  <div class="masthead-title">THz Spectroscopy Analysis Studio <span style="font-size:0.6em;color:#5a7898;">v3.1</span></div>
   <div class="masthead-sub">Temperature-Dependent Phonon Mode Analysis · Fano Resonance · BCS Order Parameter</div>
   <div class="masthead-zh">太赫兹光谱分析工作站 · 声子模式 · Fano共振 · BCS序参量</div>
 </div>
