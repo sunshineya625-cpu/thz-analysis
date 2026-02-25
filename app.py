@@ -1,5 +1,5 @@
 """
-THz Spectroscopy Analysis Studio  v3.3
+THz Spectroscopy Analysis Studio  v3.4
 Publication-quality · Bilingual UI (EN primary, ZH annotations)
 Science / Nature journal figure standards
 """
@@ -45,7 +45,7 @@ apply_nature_style()
 # PAGE CONFIG & DESIGN SYSTEM
 # ══════════════════════════════════════════════════════════════
 st.set_page_config(
-    page_title="THz Analysis Studio v3.3",
+    page_title="THz Analysis Studio v3.4",
     page_icon="🔬",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -318,7 +318,7 @@ with st.sidebar:
 # ══════════════════════════════════════════════════════════════
 st.markdown("""
 <div class="masthead">
-  <div class="masthead-title">THz Spectroscopy Analysis Studio <span style="font-size:0.6em;color:#5a7898;">v3.3</span></div>
+  <div class="masthead-title">THz Spectroscopy Analysis Studio <span style="font-size:0.6em;color:#5a7898;">v3.4</span></div>
   <div class="masthead-sub">Temperature-Dependent Phonon Mode Analysis · Fano Resonance · BCS Order Parameter</div>
   <div class="masthead-zh">太赫兹光谱分析工作站 · 声子模式 · Fano共振 · BCS序参量</div>
 </div>
@@ -943,7 +943,9 @@ with tab1:
     col_ctrl, col_plot = st.columns([1, 3])
     with col_ctrl:
         view_mode = st.radio("View mode / 查看模式",
-                             ["Single file 单文件", "All overlay 全部叠加"],
+                             ["Single file 单文件",
+                              "All overlay 全部叠加",
+                              "Raw scans (select/exclude) 原始扫描"],
                              key="roi_view_mode")
 
         if "Single" in view_mode:
@@ -999,6 +1001,117 @@ with tab1:
             fig.update_xaxes(title_text="Frequency (THz)")
             fig.update_yaxes(title_text=_amp_label)
             st.plotly_chart(fig, use_container_width=True)
+
+        elif "Raw" in view_mode:
+            # ── Raw scans with select/exclude controls ──
+            _all_raw = st.session_state.files
+            if 'excluded_scans' not in st.session_state:
+                st.session_state.excluded_scans = set()
+
+            n_raw = len(_all_raw)
+            colors_raw = get_colors(n_raw)
+            fig = plotly_fig(500,
+                f"All Raw Scans ({n_raw} files) — "
+                f"uncheck to exclude  取消勾选排除异常扫描")
+
+            for i, d in enumerate(_all_raw):
+                fname = d['filename']
+                is_excl = fname in st.session_state.excluded_scans
+                opacity = 0.15 if is_excl else 0.85
+                lw = 0.5 if is_excl else 1.3
+                dash = 'dot' if is_excl else 'solid'
+                fig.add_trace(go.Scatter(
+                    x=d['freq'].astype(float),
+                    y=d['amp'].astype(float),
+                    mode='lines',
+                    name=f"{'❌ ' if is_excl else ''}{d['temperature']:.0f}K {fname}",
+                    line=dict(color=colors_raw[i], width=lw, dash=dash),
+                    opacity=opacity,
+                    legendgroup=fname,
+                    hovertemplate=(
+                        f"<b>{d['temperature']:.0f} K</b><br>"
+                        f"{fname}<br>"
+                        f"f = %{{x:.3f}} THz<br>"
+                        f"amp = %{{y:.4f}}<extra></extra>"),
+                ))
+
+            fig.add_vrect(x0=roi_l, x1=roi_r, fillcolor="#c0392b",
+                          opacity=0.07, line_width=0,
+                          annotation_text="ROI",
+                          annotation_position="top left")
+            fig.update_xaxes(title_text="Frequency (THz)")
+            fig.update_yaxes(title_text=_amp_label)
+            fig.update_layout(legend=dict(title="Scans",
+                                          orientation='v', x=1.01,
+                                          font=dict(size=8)))
+            st.plotly_chart(fig, use_container_width=True)
+
+            # ── Per-file checkboxes ──
+            st.markdown("**Select scans to keep  勾选要保留的扫描（取消勾选 = 排除）**")
+
+            # Group raw files by temperature for organized display
+            from collections import defaultdict
+            temp_file_map = defaultdict(list)
+            for d in _all_raw:
+                temp_file_map[d['temperature']].append(d['filename'])
+
+            for temp_k in sorted(temp_file_map.keys()):
+                fnames_in_temp = temp_file_map[temp_k]
+                if len(fnames_in_temp) <= 1:
+                    continue  # no need for exclusion if only 1 scan
+                st.caption(f"**{temp_k:.0f} K** — {len(fnames_in_temp)} scans")
+                chk_cols = st.columns(min(len(fnames_in_temp), 4))
+                for j, fname in enumerate(fnames_in_temp):
+                    with chk_cols[j % len(chk_cols)]:
+                        keep = st.checkbox(
+                            fname,
+                            value=(fname not in st.session_state.excluded_scans),
+                            key=f"roi_excl_{fname}",
+                        )
+                        if not keep:
+                            st.session_state.excluded_scans.add(fname)
+                        else:
+                            st.session_state.excluded_scans.discard(fname)
+
+            # Action buttons
+            n_excl = len(st.session_state.excluded_scans)
+            btn_c1, btn_c2 = st.columns(2)
+            with btn_c1:
+                if st.button(
+                    f"🔄 Apply & Re-average  应用并重新平均"
+                    f"{f' ({n_excl} excluded)' if n_excl else ''}",
+                    type="primary", use_container_width=True,
+                    disabled=(n_excl == 0)):
+                    kept = [f for f in _all_raw
+                            if f['filename'] not in st.session_state.excluded_scans]
+                    if not kept:
+                        st.error("Cannot exclude all scans!  不能排除所有数据！")
+                    else:
+                        avg_new, grp_new = average_by_temperature(kept)
+                        st.session_state.averaged_files = avg_new
+                        st.session_state.avg_group_info = grp_new
+                        st.session_state.results = {}
+                        st.session_state.df = None
+                        log.info(f"Re-averaged from ROI tab: "
+                                 f"{len(kept)}/{len(_all_raw)} kept, "
+                                 f"excluded={st.session_state.excluded_scans}")
+                        st.rerun()
+            with btn_c2:
+                if st.button("↺ Reset all  重置", use_container_width=True,
+                             disabled=(n_excl == 0)):
+                    st.session_state.excluded_scans = set()
+                    avg_new, grp_new = average_by_temperature(_all_raw)
+                    st.session_state.averaged_files = avg_new
+                    st.session_state.avg_group_info = grp_new
+                    st.session_state.results = {}
+                    st.session_state.df = None
+                    log.info("ROI tab: exclusions reset")
+                    st.rerun()
+
+            zh(f"实线 = 保留 · 虚线/半透明 = 已排除 · "
+               f"当前排除 {n_excl} 个扫描 · "
+               f"点击「应用并重新平均」后会重新计算平均数据并清除之前的拟合结果")
+
         else:
             # ── All files overlay ──
             n_files = len(files)
