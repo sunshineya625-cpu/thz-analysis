@@ -1,7 +1,9 @@
 import numpy as np
 from scipy.fft import fft, fftfreq
 from scipy.signal import savgol_filter
-import sys  # Using sys to print errors to stderr for better visibility in logs
+from modules.logger import get_logger
+
+log = get_logger("thz.dielectric")
 
 
 class DielectricCalculator:
@@ -14,12 +16,12 @@ class DielectricCalculator:
         E_r = ref_data['E_field']
 
         if len(t_r) < 2:
-            print("DIAGNOSTIC_ERROR: Reference data 'time' array is too short.", file=sys.stderr)
+            log.error("Reference data 'time' array is too short.")
             return []
 
         dt = t_r[1] - t_r[0]
         if dt <= 0:
-            print(f"DIAGNOSTIC_ERROR: Invalid time step '{dt}' in reference data.", file=sys.stderr)
+            log.error(f"Invalid time step '{dt}' in reference data.")
             return []
 
         npad = len(t_r) * 4
@@ -39,9 +41,8 @@ class DielectricCalculator:
             try:
                 n_len = min(len(t_r), len(s.get('time', [])))
                 if n_len < 2:
-                    print(
-                        f"DIAGNOSTIC_WARNING: Skipping {fname} due to insufficient time-domain data (points: {n_len}).",
-                        file=sys.stderr)
+                    log.warning(
+                        f"Skipping {fname}: insufficient time-domain data ({n_len} pts).")
                     continue
 
                 E_s_arr = s['E_field'][:n_len]
@@ -95,12 +96,12 @@ class DielectricCalculator:
                             try:
                                 arr[:] = savgol_filter(arr, int(smooth), 3)
                             except Exception as sav_e:
-                                print(f"DIAGNOSTIC_WARNING: savgol_filter failed for {fname}: {sav_e}", file=sys.stderr)
+                                log.warning(f"savgol_filter failed for {fname}: {sav_e}")
 
                 results.append({'temp': temp, 'freq': freq_pos, 'n': n, 'k': k, 'e1': e1, 'e2': e2})
 
             except Exception as e:
-                print(f"DIAGNOSTIC_ERROR: Processing file {fname} at {temp}K failed: {repr(e)}", file=sys.stderr)
+                log.error(f"Processing file {fname} at {temp}K failed: {repr(e)}")
                 continue
         return results
 

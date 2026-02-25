@@ -21,9 +21,9 @@ from matplotlib.ticker import AutoMinorLocator
 
 # ── Nature-style matplotlib rcParams ─────────────────────────────────────────
 NATURE_RC = {
-    # fonts
+    # fonts — unified to Arial for cross-platform consistency
     "font.family":          "sans-serif",
-    "font.sans-serif":      ["Helvetica", "Arial", "DejaVu Sans"],
+    "font.sans-serif":      ["Arial", "Helvetica", "DejaVu Sans"],
     "font.size":            8,
     "axes.titlesize":       8,
     "axes.labelsize":       8,
@@ -31,6 +31,10 @@ NATURE_RC = {
     "ytick.labelsize":      7,
     "legend.fontsize":      7,
     "legend.title_fontsize":7,
+    "mathtext.fontset":     "custom",
+    "mathtext.rm":          "Arial",
+    "mathtext.it":          "Arial:italic",
+    "mathtext.bf":          "Arial:bold",
     # axes
     "axes.linewidth":       0.8,
     "axes.spines.top":      False,
@@ -60,10 +64,10 @@ NATURE_RC = {
     "legend.edgecolor":     "0.8",
     "legend.handlelength":  1.5,
     # figure
-    "figure.dpi":           150,
+    "figure.dpi":           200,
     "savefig.dpi":          300,
     "savefig.bbox":         "tight",
-    "savefig.pad_inches":   0.05,
+    "savefig.pad_inches":   0.12,
     "figure.facecolor":     "white",
     "axes.facecolor":       "white",
 }
@@ -112,24 +116,24 @@ def panel_label(ax, letter, x=-0.18, y=1.05):
 # ── Plotly layout template ────────────────────────────────────────────────────
 PLOTLY_TEMPLATE = {
     "layout": {
-        "font":       {"family": "Helvetica, Arial, sans-serif", "size": 12, "color": "#1a1a1a"},
-        "title":      {"font": {"size": 13, "color": "#1a1a1a"}, "x": 0.5, "xanchor": "center"},
+        "font":       {"family": "Arial, Helvetica, sans-serif", "size": 10, "color": "#1a1a1a"},
+        "title":      {"font": {"size": 11, "color": "#1a1a1a"}, "x": 0.5, "xanchor": "center"},
         "xaxis":      {"showgrid": False, "zeroline": False, "linecolor": "#1a1a1a",
                        "linewidth": 1.0, "ticks": "inside", "ticklen": 5,
                        "mirror": False, "showspikes": False,
-                       "title": {"font": {"size": 12}}},
+                       "title": {"font": {"size": 10}}},
         "yaxis":      {"showgrid": False, "zeroline": False, "linecolor": "#1a1a1a",
                        "linewidth": 1.0, "ticks": "inside", "ticklen": 5,
                        "mirror": False, "showspikes": False,
-                       "title": {"font": {"size": 12}}},
+                       "title": {"font": {"size": 10}}},
         "plot_bgcolor": "white",
         "paper_bgcolor": "white",
         "legend":     {"bgcolor": "rgba(255,255,255,0.9)",
                        "bordercolor": "#cccccc", "borderwidth": 0.8,
-                       "font": {"size": 11}},
+                       "font": {"size": 9}},
         "margin":     {"l": 60, "r": 20, "t": 50, "b": 50},
         "hoverlabel": {"bgcolor": "white", "bordercolor": "#aaa",
-                       "font": {"size": 11}},
+                       "font": {"size": 10}},
     }
 }
 

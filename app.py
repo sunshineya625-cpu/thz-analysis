@@ -1,5 +1,5 @@
 """
-THz Spectroscopy Analysis Studio  v3.0
+THz Spectroscopy Analysis Studio  v3.1
 Publication-quality · Bilingual UI (EN primary, ZH annotations)
 Science / Nature journal figure standards
 """
@@ -15,6 +15,9 @@ import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 from matplotlib.backends.backend_pdf import PdfPages
 warnings.filterwarnings("ignore")
+
+from modules.logger import get_logger, get_log_entries, clear_logs
+log = get_logger("thz")
 
 from modules.data_loader    import DataLoader
 from modules.fano_fitter    import FanoFitter
@@ -66,10 +69,12 @@ st.markdown("""
 
 [data-testid="stAppViewContainer"] {
   background: var(--bg);
+  font-family: Arial, Helvetica, sans-serif;
 }
 [data-testid="stSidebar"] {
   background: #f0f4f8;
   border-right: 1px solid var(--rule);
+  font-family: Arial, Helvetica, sans-serif;
 }
 
 /* ── masthead ── */
@@ -105,7 +110,7 @@ st.markdown("""
 
 /* ── section header ── */
 .sec-head {
-  font-family: 'EB Garamond', serif;
+  font-family: Arial, Helvetica, sans-serif;
   font-size: 1.15rem;
   font-weight: 600;
   color: var(--steel);
@@ -290,9 +295,20 @@ with st.sidebar:
 
     st.divider()
     if st.button("↺  Reset all · 重置", use_container_width=True):
+        clear_logs()
         for k in list(st.session_state.keys()):
             del st.session_state[k]
         st.rerun()
+
+    # ── Activity Log panel ──
+    st.markdown('<div class="sidebar-section">📋 Activity Log · 操作日志</div>',
+                unsafe_allow_html=True)
+    with st.expander("Show log  查看日志", expanded=False):
+        entries = get_log_entries()
+        if entries:
+            st.code("\n".join(entries[-30:]), language="log")
+        else:
+            st.caption("No log entries yet.  暂无日志。")
 
 # ══════════════════════════════════════════════════════════════
 # MASTHEAD
@@ -406,10 +422,13 @@ if uploaded:
         for uf in uploaded:
             try:
                 files.append(loader.load_file(uf))
+                log.info(f"Loaded {uf.name} — T={files[-1]['temperature']:.0f} K, {len(files[-1]['freq'])} pts")
             except Exception as e:
                 errs.append(f"{uf.name}: {e}")
+                log.error(f"Failed to load {uf.name}: {e}")
         files.sort(key=lambda x: x['temperature'])
         st.session_state.files = files
+        log.info(f"Total files loaded: {len(files)}")
         # Compute averages
         avg_files, grp_info = average_by_temperature(files)
         st.session_state.averaged_files = avg_files
@@ -966,6 +985,7 @@ with tab1:
         prog   = st.progress(0)
         stat   = st.empty()
         results= {}
+        log.info(f"Batch Fano fitting started: {len(files)} files, ROI={roi}")
         for i, d in enumerate(files):
             stat.text(f"Fitting {d['filename']}  ({i+1}/{len(files)}) …")
             try:
@@ -973,8 +993,10 @@ with tab1:
                                d['amp'].astype(float),
                                roi, d['temperature'], d['filename'])
                 results[d['filename']] = r
+                log.info(f"  ✓ {d['temperature']:.0f} K  R²={r['R_squared']:.4f}")
             except Exception as e:
                 st.warning(f"⚠️ {d['filename']}: {e}")
+                log.warning(f"  ✗ {d['filename']}: {e}")
                 results[d['filename']] = None
             prog.progress((i+1)/len(files))
         st.session_state.results = results
@@ -982,6 +1004,7 @@ with tab1:
         st.session_state.df = pd.DataFrame(ok) if ok else None
         st.session_state.step = 3
         prog.empty(); stat.empty()
+        log.info(f"Fitting complete: {len(ok)}/{len(files)} successful")
         st.success(f"✅ Fitting complete · 拟合完成  —  "
                    f"{len(ok)}/{len(files)} successful")
         st.rerun()
@@ -1212,9 +1235,36 @@ with tab3:
             wf_height = st.number_input("H", 400, 1000, wf_height, 50,
                                         key='wfh_n', label_visibility='collapsed')
 
-    ok_items = sorted(
+    ok_items_all = sorted(
         [(k,v) for k,v in st.session_state.results.items() if v],
         key=lambda x: x[1]['Temperature_K'])
+
+    # ── Temperature multiselect ──────────────────────────
+    all_temps = [v['Temperature_K'] for _,v in ok_items_all]
+    temp_labels = [f"{t:.0f} K" for t in all_temps]
+    st.markdown("**Select temperatures to plot  选择要绘制的温度**")
+    _sel_col1, _sel_col2 = st.columns([1, 4])
+    with _sel_col1:
+        select_all_wf = st.checkbox("Select all  全选", True, key="wf_sel_all")
+    with _sel_col2:
+        if select_all_wf:
+            selected_temps = st.multiselect(
+                "Temperatures  温度", temp_labels, default=temp_labels,
+                key="wf_temps", label_visibility='collapsed')
+        else:
+            selected_temps = st.multiselect(
+                "Temperatures  温度", temp_labels, default=[],
+                key="wf_temps_partial", label_visibility='collapsed')
+
+    # Filter ok_items to selected temperatures
+    selected_set = set(selected_temps)
+    ok_items = [(k,v) for k,v in ok_items_all
+                if f"{v['Temperature_K']:.0f} K" in selected_set]
+
+    if not ok_items:
+        st.warning("No temperatures selected.  请至少选择一个温度。")
+        st.stop()
+
     n_curves = len(ok_items)
     colors_wf = temp_cmap(n_curves)
 
@@ -1224,7 +1274,8 @@ with tab3:
     offset_step = med_h * offset_mult
 
     fig_wf = plotly_fig(wf_height,
-        'Temperature Evolution of Phonon Mode')
+        f'Temperature Evolution of Phonon Mode  ({n_curves} curves)')
+    wf_export_rows = []  # for Excel export
     for i, (fname, r) in enumerate(ok_items):
         freq_r = r['freq_roi']
         sig    = r['signal']
@@ -1257,6 +1308,16 @@ with tab3:
                 text=f'<b>{temp:.0f} K</b>',
                 font=dict(size=9.5, color=col))
 
+        # Collect data for Excel export
+        for j in range(len(fx)):
+            wf_export_rows.append({
+                'Temperature_K': temp,
+                'Frequency_THz': float(fx[j]),
+                'Signal': float(sy[j]),
+                'Signal_with_offset': float(sy[j]) + offset,
+                'Offset': offset,
+            })
+
     fig_wf.update_xaxes(title_text='Frequency (THz)',
                         range=[x_lo, x_hi+0.14])
     fig_wf.update_yaxes(title_text='Intensity (arb. u., offset)',
@@ -1264,6 +1325,32 @@ with tab3:
     fig_wf.update_layout(showlegend=False)
     st.plotly_chart(fig_wf, use_container_width=True)
     zh("颜色：蓝色→低温，红色→高温。偏移量自动以中位峰高为基准，避免曲线重叠。")
+
+    # ── Waterfall data export ────────────────────────────
+    if wf_export_rows:
+        wf_df = pd.DataFrame(wf_export_rows)
+        wf_buf = io.BytesIO()
+        with pd.ExcelWriter(wf_buf, engine='openpyxl') as xw:
+            # Long format sheet
+            wf_df.to_excel(xw, sheet_name='Waterfall_Long', index=False)
+            # Wide format: each temperature as a column pair
+            for temp_val in sorted(wf_df['Temperature_K'].unique()):
+                sub = wf_df[wf_df['Temperature_K'] == temp_val]
+                wide_df = pd.DataFrame({
+                    'Frequency_THz': sub['Frequency_THz'].values,
+                    f'Signal_{temp_val:.0f}K': sub['Signal'].values,
+                    f'Signal_offset_{temp_val:.0f}K': sub['Signal_with_offset'].values,
+                })
+                safe_name = f"T{temp_val:.0f}K"[:31]
+                wide_df.to_excel(xw, sheet_name=safe_name, index=False)
+        wf_buf.seek(0)
+        st.download_button(
+            "📥 Export Waterfall data (Excel)  导出瀑布图数据",
+            data=wf_buf.getvalue(),
+            file_name="Waterfall_Spectra_Data.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True)
+        zh("Excel 包含长格式汇总 Sheet 和每个温度的独立 Sheet（含原始信号与偏移后坐标）")
 
 # ─────────────────────────────────────────────────
 # TAB 4 — Dielectric
@@ -1543,7 +1630,7 @@ with tab5:
         plt.tight_layout(pad=0.4)
 
         buf_pub = io.BytesIO()
-        fig_pub.savefig(buf_pub, format='png', dpi=200,
+        fig_pub.savefig(buf_pub, format='png', dpi=300,
                         bbox_inches='tight')
         plt.close(fig_pub)
         buf_pub.seek(0)
@@ -1566,14 +1653,14 @@ with tab5:
 # TAB 6 — Export
 # ─────────────────────────────────────────────────
 with tab6:
-    sec("Export Results  导出结果", "Excel数据 · PDF报告 · 高分辨率图集 · 公式文档")
+    sec("Export Results  导出结果", "Excel数据 · 光谱数据 · PDF报告 · 高分辨率图集 · 公式文档")
 
-    col_e1, col_e2, col_e3, col_e4 = st.columns(4)
+    col_e1, col_e2, col_e3, col_e4, col_e5 = st.columns(5)
 
-    # Excel
+    # Excel parameters
     with col_e1:
-        st.markdown("### 📊 Excel data")
-        zh("包含Fano参数、BCS参数、介电函数三个Sheet")
+        st.markdown("### 📊 Parameters")
+        zh("包含Fano参数、介电函数参数表")
         if st.session_state.df is not None:
             buf_xl = _make_excel(st.session_state.df,
                                  st.session_state.diel)
@@ -1584,8 +1671,79 @@ with tab6:
         else:
             st.info("Complete fitting first.  请先完成拟合。")
 
-    # PDF report
+    # Spectra data Excel (NEW)
     with col_e2:
+        st.markdown("### 📈 Spectra data")
+        zh("所有温度的完整光谱数据：原始、拟合区间、拟合曲线，可导入Origin")
+        if st.session_state.results:
+            ok_r = {k:v for k,v in st.session_state.results.items() if v}
+            if ok_r:
+                spec_buf = io.BytesIO()
+                with pd.ExcelWriter(spec_buf, engine='openpyxl') as xw:
+                    # Sheet 1: Summary of all raw spectra (wide format)
+                    raw_dfs = []
+                    for d in files:
+                        col_name = f"{d['temperature']:.0f}K"
+                        tmp_df = pd.DataFrame({
+                            'Freq_THz': np.round(d['freq'].astype(float), 4),
+                            col_name: d['amp'].astype(float),
+                        }).drop_duplicates(subset=['Freq_THz']).set_index('Freq_THz')
+                        raw_dfs.append(tmp_df)
+                    if raw_dfs:
+                        raw_wide = pd.concat(raw_dfs, axis=1).sort_index()
+                        raw_wide.index.name = 'Frequency (THz)'
+                        raw_wide.reset_index(inplace=True)
+                        raw_wide.to_excel(xw, sheet_name='Raw_Spectra', index=False)
+
+                    # Sheet 2: Summary of all fitting ROI data (wide format)
+                    fit_signal_dfs = []
+                    fit_curve_dfs = []
+                    for k, v in sorted(ok_r.items(), key=lambda x: x[1]['Temperature_K']):
+                        t_lbl = f"{v['Temperature_K']:.0f}K"
+                        fx = np.round(v['freq_roi'].astype(float), 4)
+                        s_df = pd.DataFrame({
+                            'Freq_THz': fx,
+                            f'Signal_{t_lbl}': v['signal'].astype(float),
+                        }).drop_duplicates(subset=['Freq_THz']).set_index('Freq_THz')
+                        fit_signal_dfs.append(s_df)
+                        f_df = pd.DataFrame({
+                            'Freq_THz': fx,
+                            f'FanoFit_{t_lbl}': v['fitted_signal'].astype(float),
+                        }).drop_duplicates(subset=['Freq_THz']).set_index('Freq_THz')
+                        fit_curve_dfs.append(f_df)
+
+                    if fit_signal_dfs:
+                        sig_wide = pd.concat(fit_signal_dfs, axis=1).sort_index()
+                        sig_wide.index.name = 'Frequency (THz)'
+                        sig_wide.reset_index(inplace=True)
+                        sig_wide.to_excel(xw, sheet_name='ROI_Signal', index=False)
+
+                    if fit_curve_dfs:
+                        fit_wide = pd.concat(fit_curve_dfs, axis=1).sort_index()
+                        fit_wide.index.name = 'Frequency (THz)'
+                        fit_wide.reset_index(inplace=True)
+                        fit_wide.to_excel(xw, sheet_name='Fano_Fit_Curves', index=False)
+
+                    # BCS plot data
+                    if st.session_state.df is not None:
+                        df_bcs = st.session_state.df.sort_values('Temperature_K')
+                        bcs_df = df_bcs[['Temperature_K','Linear_Depth','Area',
+                                         'Peak_Freq_THz','FWHM_THz']].copy()
+                        bcs_df.to_excel(xw, sheet_name='BCS_Plot_Data', index=False)
+
+                spec_buf.seek(0)
+                st.download_button("⬇️  Download Spectra Excel",
+                    data=spec_buf.getvalue(), use_container_width=True,
+                    file_name="THz_Spectra_Data.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                log.info("Spectra data Excel exported")
+            else:
+                st.info("No fitting results.  无拟合结果。")
+        else:
+            st.info("Complete fitting first.  请先完成拟合。")
+
+    # PDF report
+    with col_e3:
         st.markdown("### 📄 PDF report")
         zh("包含BCS拟合图、瀑布图、所有代表性单峰拟合图")
         disabled_pdf = st.session_state.df is None
@@ -1602,7 +1760,7 @@ with tab6:
                 mime="application/pdf")
 
     # Figure pack
-    with col_e3:
+    with col_e4:
         st.markdown("### 🖼️ Figure pack")
         zh("所有温度的拟合图集，高分辨率PDF")
         if (st.button("Export all fit figures  导出所有拟合图",
@@ -1617,7 +1775,7 @@ with tab6:
                 mime="application/pdf")
 
     # Formula documentation
-    with col_e4:
+    with col_e5:
         st.markdown("### 📐 Formula doc")
         zh("所有公式、参数说明、当前参数值的完整文档")
         # Collect current session parameters
