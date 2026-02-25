@@ -1,5 +1,5 @@
 """
-THz Spectroscopy Analysis Studio  v3.1
+THz Spectroscopy Analysis Studio  v3.2
 Publication-quality · Bilingual UI (EN primary, ZH annotations)
 Science / Nature journal figure standards
 """
@@ -45,7 +45,7 @@ apply_nature_style()
 # PAGE CONFIG & DESIGN SYSTEM
 # ══════════════════════════════════════════════════════════════
 st.set_page_config(
-    page_title="THz Analysis Studio v3.1",
+    page_title="THz Analysis Studio v3.2",
     page_icon="🔬",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -235,6 +235,9 @@ with st.sidebar:
     use_db = "dB" in amp_col_choice
     smooth_w = st.slider("Smoothing window 平滑窗口", 1, 15, 5, 2)
     rm_bad   = st.checkbox("Remove outliers 去除坏点", True)
+    use_avg  = st.checkbox("Use averaged data 使用平均后数据", True,
+                           help="When checked, spectra at the same temperature are averaged.\n"
+                                "取消勾选后将使用所有原始扫描数据（不平均）。")
 
     st.markdown('<div class="sidebar-section">📈 BCS Fitting · BCS拟合</div>',
                 unsafe_allow_html=True)
@@ -315,7 +318,7 @@ with st.sidebar:
 # ══════════════════════════════════════════════════════════════
 st.markdown("""
 <div class="masthead">
-  <div class="masthead-title">THz Spectroscopy Analysis Studio <span style="font-size:0.6em;color:#5a7898;">v3.1</span></div>
+  <div class="masthead-title">THz Spectroscopy Analysis Studio <span style="font-size:0.6em;color:#5a7898;">v3.2</span></div>
   <div class="masthead-sub">Temperature-Dependent Phonon Mode Analysis · Fano Resonance · BCS Order Parameter</div>
   <div class="masthead-zh">太赫兹光谱分析工作站 · 声子模式 · Fano共振 · BCS序参量</div>
 </div>
@@ -707,8 +710,11 @@ tab0, tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "⑥ Export",
 ])
 
-# Use averaged files for all downstream analysis
-files = st.session_state.averaged_files or st.session_state.files
+# Use averaged or raw files based on user toggle
+if use_avg:
+    files = st.session_state.averaged_files or st.session_state.files
+else:
+    files = st.session_state.files
 raw_files = st.session_state.files
 
 # ── Apply amplitude column selection ──
