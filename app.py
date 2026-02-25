@@ -433,6 +433,11 @@ def average_by_temperature(files, tol=1.0):
         avg_amp = np.mean(interp_amps, axis=0)
         avg_amp_db = np.mean(interp_amps_db, axis=0)
 
+        # ── Diagnostic Logging ──
+        log.info(f"Math Avg {mean_temp:.0f}K (n={len(members)}): "
+                 f"Linear[mean={avg_amp.mean():.4e}, max={avg_amp.max():.4e}] | "
+                 f"dB[mean={avg_amp_db.mean():.2f}, max={avg_amp_db.max():.2f}]")
+
         # For time-domain: use the first member's data (needed for dielectric)
         m0 = members[0]
         averaged.append({
