@@ -303,15 +303,7 @@ with st.sidebar:
             del st.session_state[k]
         st.rerun()
 
-    # ── Activity Log panel ──
-    st.markdown('<div class="sidebar-section">📋 Activity Log · 操作日志</div>',
-                unsafe_allow_html=True)
-    with st.expander("Show log  查看日志", expanded=False):
-        entries = get_log_entries()
-        if entries:
-            st.code("\n".join(entries[-30:]), language="log")
-        else:
-            st.caption("No log entries yet.  暂无日志。")
+
 
 # ══════════════════════════════════════════════════════════════
 # MASTHEAD
@@ -490,6 +482,17 @@ if uploaded:
             st.session_state.step = 2
         for e in errs:
             st.warning(f"⚠️ {e}")
+
+# Render Activity Log in sidebar AFTER file loading is completed so newest logs appear
+with st.sidebar:
+    st.markdown('<div class="sidebar-section">📋 Activity Log · 操作日志</div>',
+                unsafe_allow_html=True)
+    with st.expander("Show log  查看日志", expanded=False):
+        entries = get_log_entries()
+        if entries:
+            st.code("\n".join(entries[-30:]), language="log")
+        else:
+            st.caption("No log entries yet.  暂无日志。")
 
 # ── KPI bar ──────────────────────────────────────────────────
 if st.session_state.files:
