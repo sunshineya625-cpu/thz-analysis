@@ -72,9 +72,69 @@ NATURE_RC = {
     "axes.facecolor":       "white",
 }
 
+# ── Default OriginLab rcParams ────────────────────────────────────────────────
+ORIGIN_RC = {
+    # Match Origin's classic Arial 8pt, but with slightly thicker lines
+    "font.family":          "sans-serif",
+    "font.sans-serif":      ["Arial", "Helvetica", "DejaVu Sans"],
+    "font.size":            9,
+    "axes.titlesize":       9,
+    "axes.labelsize":       9,
+    "xtick.labelsize":      8,
+    "ytick.labelsize":      8,
+    "legend.fontsize":      8,
+    "mathtext.fontset":     "custom",
+    "mathtext.rm":          "Arial",
+    "mathtext.it":          "Arial:italic",
+    "mathtext.bf":          "Arial:bold",
+    
+    # Origin's thick fully-boxed axes
+    "axes.linewidth":       1.5,
+    "axes.spines.top":      True,
+    "axes.spines.right":    True,
+    "axes.unicode_minus":   False,
+    "axes.formatter.use_mathtext": True,
+    
+    # Ticks pointing INWARDS, thick lines
+    "xtick.direction":      "in",
+    "ytick.direction":      "in",
+    "xtick.major.width":    1.5,
+    "ytick.major.width":    1.5,
+    "xtick.minor.width":    1.0,
+    "ytick.minor.width":    1.0,
+    "xtick.major.size":     6.0,
+    "ytick.major.size":     6.0,
+    "xtick.minor.size":     3.0,
+    "ytick.minor.size":     3.0,
+    "xtick.top":            True,
+    "ytick.right":          True,
+    
+    # Lines
+    "lines.linewidth":      1.5,
+    "lines.markersize":     5.0,
+    
+    # Boxed legend
+    "legend.frameon":       True,
+    "legend.framealpha":    1.0,
+    "legend.edgecolor":     "black",
+    "legend.fancybox":      False,
+    "legend.handlelength":  2.0,
+    
+    "figure.dpi":           200,
+    "savefig.dpi":          300,
+    "savefig.bbox":         "tight",
+    "savefig.pad_inches":   0.1,
+    "figure.facecolor":     "white",
+    "axes.facecolor":       "white",
+}
+
 def apply_nature_style():
     """Apply Nature-journal rcParams globally."""
     mpl.rcParams.update(NATURE_RC)
+    
+def apply_origin_style():
+    """Apply classic OriginLab default rcParams globally."""
+    mpl.rcParams.update(ORIGIN_RC)
 
 # ── Colorblind-safe palettes ──────────────────────────────────────────────────
 # Based on Wong (2011) Nature Methods — 7 colors

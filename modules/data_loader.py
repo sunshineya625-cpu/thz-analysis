@@ -1,16 +1,30 @@
 import re
 import numpy as np
+import streamlit as st
 
 class DataLoader:
-    def load_file(self, file_obj):
-        filename = file_obj.name
+    @staticmethod
+    @st.cache_data(show_spinner=False, ttl=3600)
+    def load_file_content(filename, contentBytes):
+        """Helper to cache parsing logic. We pass raw bytes so it is hashable for Streamlit"""
         try:
-            content = file_obj.read().decode('utf-8', errors='ignore')
+            content = contentBytes.decode('utf-8', errors='ignore')
         except Exception as e:
              raise ValueError(f"Could not read or decode file {filename}: {e}")
 
         lines = content.splitlines()
-        temperature = self._extract_temperature(content, filename)
+        temperature = -1.0
+        
+        # Temp extraction
+        for line in lines[:15]:
+            if 'description' in line.lower():
+                m = re.search(r'(\d+(?:\.\d+)?)\s*[Kk]', line, re.IGNORECASE)
+                if m:
+                    temperature = float(m.group(1))
+                    break
+        if temperature < 0:
+            m = re.search(r'(\d+(?:\.\d+)?)\s*[Kk]', filename, re.IGNORECASE)
+            if m: temperature = float(m.group(1))
 
         header_row = 15
         for i, ln in enumerate(lines):
@@ -46,7 +60,6 @@ class DataLoader:
         time_full    = arr[:, 1].astype(float)
         
         # Compensate for delay stage mechanical shift if present
-        # Δtime = Δpos / c. Using c = 299.79 um/ps. addition aligns the data in absolute time
         if start_pos != 0.0:
             time_full = time_full + (start_pos / 299.792458)
             
@@ -72,6 +85,12 @@ class DataLoader:
             'amp':         amp_masked,
             'amp_db':      amp_db_masked,
         }
+
+    def load_file(self, file_obj):
+        # We read the bytes here so we can pass them to the cached function
+        # file_obj is an UploadedFile, not natively hashable by Streamlit without issues
+        contentBytes = file_obj.read()
+        return self.load_file_content(file_obj.name, contentBytes)
 
     def _extract_temperature(self, content, filename):
         for line in content.splitlines()[:15]:

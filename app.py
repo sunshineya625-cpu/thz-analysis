@@ -1,5 +1,5 @@
 """
-THz Spectroscopy Analysis Studio  v3.7
+THz Spectroscopy Analysis Studio  v4.0
 Publication-quality · Bilingual UI (EN primary, ZH annotations)
 Science / Nature journal figure standards
 """
@@ -23,6 +23,7 @@ from modules.data_loader    import DataLoader
 from modules.fano_fitter    import FanoFitter
 from modules.bcs_analyzer   import BCSAnalyzer
 from modules.dielectric_calc import DielectricCalculator
+from modules.session_manager import SessionManager
 from modules.science_plot   import (apply_nature_style, apply_plotly_style,
                                     temp_cmap, format_ax, panel_label,
                                     SINGLE_COL, DOUBLE_COL, TALL_DOUBLE, WONG7)
@@ -45,7 +46,7 @@ apply_nature_style()
 # PAGE CONFIG & DESIGN SYSTEM
 # ══════════════════════════════════════════════════════════════
 st.set_page_config(
-    page_title="THz Analysis Studio v3.7",
+    page_title="THz Analysis Studio v4.0",
     page_icon="🔬",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -310,7 +311,7 @@ with st.sidebar:
 # ══════════════════════════════════════════════════════════════
 st.markdown("""
 <div class="masthead">
-  <div class="masthead-title">THz Spectroscopy Analysis Studio <span style="font-size:0.6em;color:#5a7898;">v3.7</span></div>
+  <div class="masthead-title">THz Spectroscopy Analysis Studio <span style="font-size:0.6em;color:#5a7898;">v4.0</span></div>
   <div class="masthead-sub">Temperature-Dependent Phonon Mode Analysis · Fano Resonance · BCS Order Parameter</div>
   <div class="masthead-zh">太赫兹光谱分析工作站 · 声子模式 · Fano共振 · BCS序参量</div>
 </div>
@@ -478,6 +479,7 @@ if uploaded:
         st.session_state.avg_group_info = grp_info
         st.session_state.results = {}
         st.session_state.df = None
+        st.session_state['_files_changed'] = True  # Trigger auto peak-finding
         if st.session_state.step == 1:
             st.session_state.step = 2
         for e in errs:
@@ -537,24 +539,26 @@ else:
 # TABS
 # ══════════════════════════════════════════════════════════════
 
-def _single_fig_export(r, w, h, dpi, fmt):
-    apply_nature_style()
+def _single_fig_export(r, w, h, dpi, fmt, style='Nature'):
+    if style == 'Origin': apply_origin_style()
+    else: apply_nature_style()
+    
     fig, ax = plt.subplots(figsize=(w, h))
     fx, sig, fit_s = r['freq_roi'], r['signal'], r['fitted_signal']
     ax.fill_between(fx, 0, sig, color='#2c6ea5', alpha=0.12)
-    ax.plot(fx, sig,   color='#1a5f8a', lw=1.4, label='Signal')
-    ax.plot(fx, fit_s, color='#c0392b', lw=1.4, ls='--', label='Fano fit')
+    ax.plot(fx, sig,   color='#1a5f8a', lw=1.5, label='Signal')
+    ax.plot(fx, fit_s, color='#c0392b', lw=1.5, ls='--', label='Fano fit')
     ax.vlines(r['peak_x'], 0, r['Linear_Depth'],
-              colors='#27ae60', lw=1.0, ls=':')
+              colors='#27ae60', lw=1.2, ls=':')
     ax.hlines(r['half_height'], r['left_x'], r['right_x'],
-              colors='#8e44ad', lw=1.0)
+              colors='#8e44ad', lw=1.2)
     ax.set_xlabel('Frequency (THz)')
     ax.set_ylabel('ΔAmplitude (arb. u.)')
     ax.set_title(f"T = {r['Temperature_K']:.0f} K", pad=5, fontsize=8)
     ax.set_ylim(bottom=0)
     ax.legend(frameon=True)
     format_ax(ax); panel_label(ax, 'a')
-    plt.tight_layout(pad=0.4)
+    plt.tight_layout(pad=0.2)
     buf = io.BytesIO()
     fig.savefig(buf, format=fmt, dpi=dpi, bbox_inches='tight')
     plt.close(fig)
@@ -585,8 +589,10 @@ def _make_excel(df, diel_rs):
     return buf.getvalue()
 
 
-def _make_pdf_report(df, results, tc_fixed_val, dpi):
-    apply_nature_style()
+def _make_pdf_report(df, results, tc_fixed_val, dpi, style='Nature'):
+    if style == 'Origin': apply_origin_style()
+    else: apply_nature_style()
+    
     bcs = BCSAnalyzer(tc_fixed=tc_fixed_val)
     df  = df.sort_values('Temperature_K')
     T   = df['Temperature_K'].values.astype(float)
@@ -601,23 +607,23 @@ def _make_pdf_report(df, results, tc_fixed_val, dpi):
             (axes[1],'Area',        'Integrated Area (arb. u.·THz)','#27ae60'),
         ]:
             y = df[col].values.astype(float)
-            ax.scatter(T, y, s=22, color=color,
-                       edgecolors='#111', linewidths=0.6, zorder=5)
+            ax.scatter(T, y, s=28, color=color,
+                       edgecolors='#111', linewidths=0.8, zorder=5)
             p = bcs.fit(T, y)
             if p:
                 ax.plot(T_s, bcs.bcs(T_s,*p),
-                        color='#c0392b', lw=1.4,
+                        color='#c0392b', lw=1.6,
                         label=f'BCS  $T_c$={p[1]:.1f} K  $\\beta$={p[2]:.2f}')
-                ax.axvline(p[1], color='#888', ls='--', lw=0.8)
+                ax.axvline(p[1], color='#888', ls='--', lw=1.0)
             ax.set_xlabel('Temperature (K)')
             ax.set_ylabel(lbl)
             ax.set_ylim(bottom=0)
-            ax.legend(fontsize=6.5)
+            ax.legend(fontsize=7)
             format_ax(ax)
         panel_label(axes[0],'a'); panel_label(axes[1],'b')
-        plt.suptitle('BCS Order Parameter Fitting', fontsize=9,
+        plt.suptitle('BCS Order Parameter Fitting', fontsize=10,
                      fontweight='bold', y=1.01)
-        plt.tight_layout(pad=0.5)
+        plt.tight_layout(pad=0.3)
         pdf.savefig(fig, dpi=dpi, bbox_inches='tight'); plt.close()
 
         # ── page 2: freq + FWHM ─────────────────────────────────────────
@@ -627,15 +633,15 @@ def _make_pdf_report(df, results, tc_fixed_val, dpi):
             (axes[1],'FWHM_THz',    'FWHM (THz)','#8e44ad'),
         ]:
             ax.plot(T, df[col].values, 'o--', color=col2,
-                    ms=3.5, lw=0.9, mec='#111', mew=0.5)
+                    ms=4.5, lw=1.2, mec='#111', mew=0.8)
             ax.set_xlabel('Temperature (K)')
             ax.set_ylabel(ylab)
             ax.set_ylim(bottom=0)
             format_ax(ax)
         panel_label(axes[0],'c'); panel_label(axes[1],'d')
-        plt.suptitle('Phonon Frequency and Linewidth', fontsize=9,
+        plt.suptitle('Phonon Frequency and Linewidth', fontsize=10,
                      fontweight='bold', y=1.01)
-        plt.tight_layout(pad=0.5)
+        plt.tight_layout(pad=0.3)
         pdf.savefig(fig, dpi=dpi, bbox_inches='tight'); plt.close()
 
         # ── page 3+: waterfall ──────────────────────────────────────────
@@ -714,8 +720,10 @@ def _make_pdf_report(df, results, tc_fixed_val, dpi):
     return buf.read()
 
 
-def _export_all_figs(results, dpi):
-    apply_nature_style()
+def _export_all_figs(results, dpi, style='Nature'):
+    if style == 'Origin': apply_origin_style()
+    else: apply_nature_style()
+    
     buf = io.BytesIO()
     ok_items = sorted(
         [(k,v) for k,v in results.items() if v],
@@ -727,13 +735,13 @@ def _export_all_figs(results, dpi):
             ax.fill_between(r['freq_roi'],0,r['signal'],
                             color='#2c6ea5',alpha=0.12)
             ax.plot(r['freq_roi'],r['signal'],
-                    color='#1a5f8a',lw=1.4,label='Signal')
+                    color='#1a5f8a',lw=1.5,label='Signal')
             ax.plot(r['freq_roi'],r['fitted_signal'],
-                    color='#c0392b',lw=1.4,ls='--',label='Fano fit')
+                    color='#c0392b',lw=1.5,ls='--',label='Fano fit')
             ax.vlines(r['peak_x'],0,r['Linear_Depth'],
-                      colors='#27ae60',lw=1.1,ls=':')
+                      colors='#27ae60',lw=1.2,ls=':')
             ax.hlines(r['half_height'],r['left_x'],r['right_x'],
-                      colors='#8e44ad',lw=1.1)
+                      colors='#8e44ad',lw=1.2)
             ax.set_xlabel('Frequency (THz)')
             ax.set_ylabel('ΔAmplitude (arb. u.)')
             ax.set_title(f"T = {r['Temperature_K']:.0f} K  ·  "
@@ -741,9 +749,9 @@ def _export_all_figs(results, dpi):
                          f"R² = {r['R_squared']:.4f}",
                          fontsize=7, pad=4)
             ax.set_ylim(bottom=0)
-            ax.legend(fontsize=6.5)
+            ax.legend(fontsize=7)
             format_ax(ax)
-            plt.tight_layout(pad=0.4)
+            plt.tight_layout(pad=0.2)
             pdf.savefig(fig, dpi=dpi, bbox_inches='tight')
             plt.close(fig)
 
@@ -751,7 +759,7 @@ def _export_all_figs(results, dpi):
     return buf.read()
 
 
-tab0, tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+tab0, tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "⓪ Averaging",
     "① ROI & Fitting",
     "② BCS Analysis",
@@ -759,6 +767,7 @@ tab0, tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "④ Dielectric",
     "⑤ Peak Detail",
     "⑥ Export",
+    "⑦ History",
 ])
 
 # Use averaged or raw files based on user toggle
@@ -1010,30 +1019,90 @@ with tab1:
         fa  = sel['freq'].astype(float)
         flo, fhi = float(fa.min()), float(fa.max())
 
+        # Auto ROI Detection logic
+        st.write("### Target Frequency (Auto-detect anchor)")
+        target_f = st.number_input("Look for Fano dip near (THz)", min_value=flo, max_value=fhi, value=1.0, step=0.05, key='target_f')
+        
+        def run_auto_roi():
+            try:
+                from scipy.signal import find_peaks
+                # Use the lowest temperature data for best peak visibility
+                low_t_data = min(files, key=lambda d: d['temperature'])
+                y_sm = pd.Series(low_t_data['amp'].astype(float)).rolling(window=5, center=True).mean().fillna(method='bfill').fillna(method='ffill').values
+                
+                # Fano in transmission is a dip, so we invert the signal to find peaks
+                inverted_y = -y_sm + np.max(y_sm)
+                
+                # Find prominent peaks (dips)
+                peaks, properties = find_peaks(inverted_y, width=3, prominence=np.max(inverted_y)*0.02)
+                
+                if len(peaks) > 0:
+                    # Find the peak closest to the user's requested target frequency
+                    peak_freqs = fa[peaks]
+                    closest_peak_idx = peaks[np.argmin(np.abs(peak_freqs - st.session_state['target_f']))]
+                    center_freq = fa[closest_peak_idx]
+                    
+                    # Set bounds roughly ±0.25 THz around the peak, bounded by data limits
+                    init_l = np.clip(center_freq - 0.25, flo, fhi)
+                    init_r = np.clip(center_freq + 0.25, flo, fhi)
+                    if init_l < init_r:
+                        st.session_state['roi_l_val'] = float(init_l)
+                        st.session_state['roi_r_val'] = float(init_r)
+                        return
+            except Exception as e:
+                log.warning(f"Auto ROI failed: {e}")
+            
+            # Fallback if detection fails
+            st.session_state['roi_l_val'] = float(np.clip(0.8, flo, fhi))
+            st.session_state['roi_r_val'] = float(np.clip(1.3, flo, fhi))
+
+        # Run Auto ROI on first load or when files change
+        if 'roi_l_val' not in st.session_state or st.session_state.get('_files_changed', False):
+            run_auto_roi()
+            st.session_state['_files_changed'] = False
+        
+        # UI controls
+        st.button("✨ Auto-detect Fano Dip  自动寻找共振区间", 
+                  on_click=run_auto_roi, use_container_width=True)
+        st.divider()
+
+        st.write("### ROI Manual Override / 手动微调")
+        def sync_l_slider(): st.session_state['roi_l_num'] = st.session_state['roi_l_val']
+        def sync_l_num(): st.session_state['roi_l_val'] = st.session_state['roi_l_num']
+        def sync_r_slider(): st.session_state['roi_r_num'] = st.session_state['roi_r_val']
+        def sync_r_num(): st.session_state['roi_r_val'] = st.session_state['roi_r_num']
+        
+        if 'roi_l_num' not in st.session_state: st.session_state['roi_l_num'] = st.session_state['roi_l_val']
+        if 'roi_r_num' not in st.session_state: st.session_state['roi_r_num'] = st.session_state['roi_r_val']
+
         st.caption("Left boundary (THz) 左边界")
         _rl1, _rl2 = st.columns([2, 1])
         with _rl1:
             roi_l = st.slider("Left THz", flo, fhi,
-                              float(np.clip(0.80, flo, fhi)), 0.005,
-                              key='roi_l_slider', label_visibility='collapsed')
+                              float(np.clip(st.session_state['roi_l_val'], flo, fhi)), 0.005,
+                              key='roi_l_val', on_change=sync_l_slider, label_visibility='collapsed')
         with _rl2:
-            roi_l = st.number_input("Left", flo, fhi, roi_l, 0.005,
-                                    format="%.3f", key='roi_l_num',
+            roi_l = st.number_input("Left", flo, fhi, st.session_state['roi_l_num'], 0.005,
+                                    format="%.3f", key='roi_l_num', on_change=sync_l_num,
                                     label_visibility='collapsed')
 
         st.caption("Right boundary (THz) 右边界")
         _rr1, _rr2 = st.columns([2, 1])
         with _rr1:
             roi_r = st.slider("Right THz", flo, fhi,
-                              float(np.clip(1.30, flo, fhi)), 0.005,
-                              key='roi_r_slider', label_visibility='collapsed')
+                              float(np.clip(st.session_state['roi_r_val'], flo, fhi)), 0.005,
+                              key='roi_r_val', on_change=sync_r_slider, label_visibility='collapsed')
         with _rr2:
-            roi_r = st.number_input("Right", flo, fhi, roi_r, 0.005,
-                                    format="%.3f", key='roi_r_num',
+            roi_r = st.number_input("Right", flo, fhi, st.session_state['roi_r_num'], 0.005,
+                                    format="%.3f", key='roi_r_num', on_change=sync_r_num,
                                     label_visibility='collapsed')
 
         if roi_l >= roi_r:
             st.error("Left boundary must be < right boundary")
+        
+        # Explicit bounds protection
+        roi_l = max(roi_l, flo)
+        roi_r = min(roi_r, fhi)
         st.session_state.roi = (roi_l, roi_r)
 
         do_fit = st.button("▶  Run batch Fano fitting\\n批量拟合",
@@ -1833,53 +1902,65 @@ with tab5:
     # ── Publication matplotlib figure ──────────────────────────
     st.divider()
     sec("Publication-Quality Figure (matplotlib)",
-        "论文级静态图 · Nature/Science排版标准")
+        "论文级静态图 · 现支持 Nature / Origin 排版风格")
 
     col_fig, col_opt = st.columns([3,1])
     with col_opt:
-        fig_w_in = st.number_input("Width (in)  图宽(英寸)",
+        plot_style = st.selectbox("Style 风格", ["Nature", "Origin"])
+        fig_w_in = st.number_input("Width (in) 图宽(英寸)",
                                    2.5, 7.5, 3.5, 0.5)
-        fig_h_in = st.number_input("Height (in)  图高(英寸)",
+        fig_h_in = st.number_input("Height (in) 图高(英寸)",
                                    2.0, 6.0, 3.0, 0.5)
-        show_fill= st.checkbox("Show area fill  显示面积", True)
-        show_ann = st.checkbox("Show annotations  显示标注", True)
+        show_fill= st.checkbox("Show area fill 面积着色", True)
+        show_ann = st.checkbox("Show annotations 显示标注", True)
+        
+        st.divider()
+        export_fmt = st.selectbox("Format 格式", ['png', 'pdf', 'svg', 'eps'])
+        export_dpi = st.select_slider("DPI 分辨率", [150, 300, 600], 300)
 
     with col_fig:
-        apply_nature_style()
+        if plot_style == 'Origin': apply_origin_style()
+        else: apply_nature_style()
+        
         fig_pub, ax = plt.subplots(figsize=(fig_w_in, fig_h_in))
 
         if show_fill:
             ax.fill_between(fx, 0, sig, color='#2c6ea5', alpha=0.12,
                             zorder=1)
-        ax.plot(fx, sig, color='#1a5f8a', lw=1.4,
-                label='Signal', zorder=3)
-        ax.plot(fx, fit_s, color='#c0392b', lw=1.4, ls='--',
-                label='Fano fit', zorder=4)
+        
+        # Origin lines are slightly thicker, controlled automatically by RC params
+        ax.plot(fx, sig, color='#1a5f8a', label='Signal', zorder=3)
+        ax.plot(fx, fit_s, color='#c0392b', ls='--', label='Fano fit', zorder=4)
 
         if show_ann:
             ax.vlines(r['peak_x'], 0, r['Linear_Depth'],
-                      colors='#27ae60', lw=1.2, ls=':', zorder=2)
+                      colors='#27ae60', ls=':', zorder=2)
             ax.hlines(half, lx, rx,
-                      colors='#8e44ad', lw=1.2, zorder=2)
+                      colors='#8e44ad', zorder=2)
             ax.annotate(f"FWHM = {r['FWHM_THz']:.4f} THz",
                         xy=((lx+rx)/2, half),
                         xytext=((lx+rx)/2, half*1.3),
-                        fontsize=6.5, color='#8e44ad', ha='center',
+                        fontsize=matplotlib.rcParams['font.size'] - 1.5, 
+                        color='#8e44ad', ha='center',
                         arrowprops=dict(arrowstyle='-',
                                         color='#8e44ad', lw=0.8))
 
         ax.set_xlabel('Frequency (THz)')
         ax.set_ylabel('ΔAmplitude (arb. u.)')
         ax.set_title(f'T = {r["Temperature_K"]:.0f} K',
-                     pad=6, fontsize=8)
+                     pad=6, fontsize=matplotlib.rcParams['axes.titlesize'])
         ax.set_ylim(bottom=0)
-        ax.legend(frameon=True, loc='upper right')
+        ax.legend(loc='upper right')
         format_ax(ax)
-        panel_label(ax, 'a')
-        plt.tight_layout(pad=0.4)
+        if plot_style == 'Nature':
+            panel_label(ax, 'a')
+            plt.tight_layout(pad=0.2)
+        else:
+            # Origin plots rarely have 'a' panel labels inside the box, tighter layout
+            plt.tight_layout(pad=0.1)
 
         buf_pub = io.BytesIO()
-        fig_pub.savefig(buf_pub, format='png', dpi=300,
+        fig_pub.savefig(buf_pub, format='png', dpi=export_dpi,
                         bbox_inches='tight')
         plt.close(fig_pub)
         buf_pub.seek(0)
@@ -1892,7 +1973,7 @@ with tab5:
     st.download_button(
         f"⬇️  Download this figure (.{export_fmt})  下载此图",
         data=_single_fig_export(r, fig_w_in, fig_h_in,
-                                export_dpi, export_fmt),
+                                export_dpi, export_fmt, plot_style),
         file_name=f"fano_{r['Temperature_K']:.0f}K.{export_fmt}",
         mime=f"image/{export_fmt}" if export_fmt!='pdf'
              else "application/pdf",
@@ -1920,13 +2001,14 @@ with tab6:
         else:
             st.info("Complete fitting first.  请先完成拟合。")
 
-    # Spectra data Excel (NEW)
+    # Spectra data TXT + Excel (NEW)
     with col_e2:
         st.markdown("### 📈 Spectra data")
-        zh("所有温度的完整光谱数据：原始、拟合区间、拟合曲线，可导入Origin")
+        zh("所有温度的完整数据 (Excel/TXT皆可直接进Origin)")
         if st.session_state.results:
             ok_r = {k:v for k,v in st.session_state.results.items() if v}
             if ok_r:
+                # ── Generate Excel ──
                 spec_buf = io.BytesIO()
                 with pd.ExcelWriter(spec_buf, engine='openpyxl') as xw:
                     # Sheet 1: Summary of all raw spectra (wide format)
@@ -1973,7 +2055,7 @@ with tab6:
                         fit_wide.reset_index(inplace=True)
                         fit_wide.to_excel(xw, sheet_name='Fano_Fit_Curves', index=False)
 
-                    # BCS plot data
+                    # Sheet 3: BCS plot data
                     if st.session_state.df is not None:
                         df_bcs = st.session_state.df.sort_values('Temperature_K')
                         bcs_df = df_bcs[['Temperature_K','Linear_Depth','Area',
@@ -1981,11 +2063,18 @@ with tab6:
                         bcs_df.to_excel(xw, sheet_name='BCS_Plot_Data', index=False)
 
                 spec_buf.seek(0)
-                st.download_button("⬇️  Download Spectra Excel",
+                st.download_button("⬇️  Excel (.xlsx)",
                     data=spec_buf.getvalue(), use_container_width=True,
                     file_name="THz_Spectra_Data.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-                log.info("Spectra data Excel exported")
+                
+                # ── Generate TXT (Origin ready) from raw_wide ──
+                if raw_dfs:
+                    txt_data = raw_wide.to_csv(sep='\t', index=False)
+                    st.download_button("⬇️  Origin TXT",
+                        data=txt_data.encode('utf-8'), use_container_width=True,
+                        file_name="Origin_Raw_Spectra.txt",
+                        mime="text/plain")
             else:
                 st.info("No fitting results.  无拟合结果。")
         else:
@@ -1995,32 +2084,35 @@ with tab6:
     with col_e3:
         st.markdown("### 📄 PDF report")
         zh("包含BCS拟合图、瀑布图、所有代表性单峰拟合图")
+        report_style = st.selectbox("Style", ["Nature", "Origin"], key="rep_style", label_visibility="collapsed")
+        
         disabled_pdf = st.session_state.df is None
-        if st.button("Generate PDF report  生成PDF报告",
+        if st.button("Generate PDF report  生成报告",
                      use_container_width=True, disabled=disabled_pdf):
             with st.spinner("Generating publication-quality PDF …  生成中 …"):
                 buf_pdf = _make_pdf_report(
                     st.session_state.df,
                     st.session_state.results,
-                    tc_fixed, export_dpi)
+                    tc_fixed, export_dpi, report_style)
             st.download_button("⬇️  Download PDF",
                 data=buf_pdf, use_container_width=True,
-                file_name="THz_Analysis_Report.pdf",
+                file_name=f"THz_Analysis_Report_{report_style}.pdf",
                 mime="application/pdf")
 
     # Figure pack
     with col_e4:
         st.markdown("### 🖼️ Figure pack")
-        zh("所有温度的拟合图集，高分辨率PDF")
-        if (st.button("Export all fit figures  导出所有拟合图",
+        zh("所有温度的拟合图集整理打包为单一PDF卷宗")
+        pack_style = st.selectbox("Style", ["Nature", "Origin"], key="pack_style", label_visibility="collapsed")
+        if (st.button("Export all fit figures  导出图集",
                       use_container_width=True,
                       disabled=(not st.session_state.results))):
             with st.spinner("Rendering all figures …"):
                 buf_all = _export_all_figs(
-                    st.session_state.results, export_dpi)
+                    st.session_state.results, export_dpi, pack_style)
             st.download_button("⬇️  Download figure pack",
                 data=buf_all, use_container_width=True,
-                file_name="THz_all_fits.pdf",
+                file_name=f"THz_All_Fits_{pack_style}.pdf",
                 mime="application/pdf")
 
     # Formula documentation
@@ -2057,6 +2149,72 @@ with tab6:
             use_container_width=True,
             file_name="THz_Formula_Documentation.md",
             mime="text/markdown")
+
+    st.divider()
+    st.markdown("### 💾 Workspace Saving")
+    zh("持久化保存当前分析会话（包含数据、参数和拟合结果）并生成Markdown总结报告")
+    
+    _ws1, _ws2 = st.columns([1, 4])
+    with _ws1:
+        session_name = st.text_input("Session Name 命名", value="MyExperiment", label_visibility="collapsed")
+    with _ws2:
+        if st.button("Save entire workspace and generate report  保存工作区", type="primary", use_container_width=True):
+            if st.session_state.files:
+                try:
+                    with st.spinner("Saving session & generating report..."):
+                        # dict() natively unrolls session_state to a python dict
+                        saved_dir = SessionManager.save_session(session_name, dict(st.session_state))
+                        st.success(f"✅ Session saved successfully to `{saved_dir}/`")
+                        log.info(f"Session '{session_name}' saved to {saved_dir}")
+                except Exception as e:
+                    st.error(f"Failed to save session: {e}")
+                    log.error(f"Session save failed: {e}")
+            else:
+                st.warning("Workspace is empty. Load files first. ")
+
+# ─────────────────────────────────────────────────
+# TAB 7 — History & Reports
+# ─────────────────────────────────────────────────
+with tab7:
+    sec("History & Auto-Reports  历史记录与自动报告", "管理过去保存的分析会话，直接查看Markdown摘要文档")
+    
+    sessions = SessionManager.list_sessions()
+    
+    if not sessions:
+        st.info("No saved sessions found. Save a workspace in the Export tab. 暂无保存的会话记录。")
+    else:
+        # Layout: Timeline on the left, Report viewer on the right
+        col_list, col_view = st.columns([1, 3])
+        
+        with col_list:
+            st.markdown("### Saved Sessions")
+            for s in sessions:
+                # Add a button for each session
+                lbl = f"📁 {s['dir'][16:]}\n({s['date']})"
+                if st.button(lbl, key=f"btn_{s['dir']}", use_container_width=True):
+                    st.session_state['view_session_report'] = s['dir']
+                    
+        with col_view:
+            st.markdown("### Report Viewer")
+            target_sess = st.session_state.get('view_session_report')
+            if target_sess:
+                report_path = os.path.join("sessions", target_sess, "report.md")
+                if os.path.exists(report_path):
+                    with open(report_path, 'r', encoding='utf-8') as f:
+                        md_content = f.read()
+                    
+                    st.markdown(md_content)
+                    
+                    st.divider()
+                    st.caption(f"Raw data and parameters are stored in `{os.path.join('sessions', target_sess, 'workspace.json')}`")
+                    
+                    with open(report_path, 'r', encoding='utf-8') as f:
+                        st.download_button("⬇️ Download this Report (.md)", data=f.read().encode('utf-8'),
+                                          file_name=f"{target_sess}_report.md", mime="text/markdown", use_container_width=True)
+                else:
+                    st.warning("Report file missing for this session.")
+            else:
+                st.info("Select a session from the list to view its report.  在左侧选择要查看的记录。")
 
 
 # ══════════════════════════════════════════════════════════════
