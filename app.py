@@ -1,5 +1,5 @@
 """
-THz Spectroscopy Analysis Studio  v4.0
+THz Spectroscopy Analysis Studio  v4.1
 Publication-quality · Bilingual UI (EN primary, ZH annotations)
 Science / Nature journal figure standards
 """
@@ -46,7 +46,7 @@ apply_nature_style()
 # PAGE CONFIG & DESIGN SYSTEM
 # ══════════════════════════════════════════════════════════════
 st.set_page_config(
-    page_title="THz Analysis Studio v4.0",
+    page_title="THz Analysis Studio v4.1",
     page_icon="🔬",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -311,7 +311,7 @@ with st.sidebar:
 # ══════════════════════════════════════════════════════════════
 st.markdown("""
 <div class="masthead">
-  <div class="masthead-title">THz Spectroscopy Analysis Studio <span style="font-size:0.6em;color:#5a7898;">v4.0</span></div>
+  <div class="masthead-title">THz Spectroscopy Analysis Studio <span style="font-size:0.6em;color:#5a7898;">v4.1</span></div>
   <div class="masthead-sub">Temperature-Dependent Phonon Mode Analysis · Fano Resonance · BCS Order Parameter</div>
   <div class="masthead-zh">太赫兹光谱分析工作站 · 声子模式 · Fano共振 · BCS序参量</div>
 </div>
@@ -788,9 +788,7 @@ if use_db:
     for d in raw_files:
         if 'amp_db' in d:
             d['amp'] = d['amp_db']
-    _amp_label = "Amplitude dB"
-else:
-    _amp_label = "Amplitude (a.u.)"
+_amp_label = "Amplitude (dB)" if use_db else "Amplitude (A.U.)"
 
 # ─────────────────────────────────────────────────
 # TAB 0 — Averaging
@@ -901,7 +899,7 @@ with tab0:
 
             fig_grp.update_xaxes(title_text='Frequency (THz)')
             fig_grp.update_yaxes(title_text=_amp_label)
-            st.plotly_chart(fig_grp, use_container_width=True)
+            st.plotly_chart(fig_grp, use_container_width=True, config={'editable': True})
             zh(f"保留 {kept_count}/{len(members)} 个扫描 · "
                f"虚线/半透明 = 已排除 · 粗红线 = 当前平均结果")
             st.markdown("---")
@@ -1122,7 +1120,7 @@ with tab1:
                           opacity=0.07, line_width=0)
             fig.update_xaxes(title_text="Frequency (THz)")
             fig.update_yaxes(title_text=_amp_label)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True, config={'editable': True})
 
         elif "Raw" in view_mode:
             # ── Raw scans with select/exclude controls ──
@@ -1167,7 +1165,7 @@ with tab1:
             fig.update_layout(legend=dict(title="Scans",
                                           orientation='v', x=1.01,
                                           font=dict(size=8)))
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True, config={'editable': True})
 
             # ── Per-file checkboxes ──
             st.markdown("**Select scans to keep  勾选要保留的扫描（取消勾选 = 排除）**")
@@ -1263,7 +1261,7 @@ with tab1:
             fig.update_yaxes(title_text=_amp_label)
             fig.update_layout(legend=dict(title="Temperature",
                                           orientation='v', x=1.01))
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, use_container_width=True, config={'editable': True})
 
             # --- Export Overlay Data ---
             dfs = []
@@ -1441,14 +1439,15 @@ with tab2:
             st.session_state.fitted_tc = f"{Tc:.1f} K"
         fig.update_xaxes(title_text='Temperature (K)')
         fig.update_yaxes(title_text=ylab, rangemode='tozero')
-        fig.update_layout(legend=dict(x=0.02,y=0.98))
+        # Allow plotly to auto-place legend outside data bounds
+        fig.update_layout(legend=dict(yanchor="top", y=1, xanchor="left", x=1.02, bgcolor="rgba(255,255,255,0.8)"))
         return fig, params
 
     col_a, col_b = st.columns(2)
     with col_a:
         fa, pa = bcs_panel(df['Linear_Depth'].values.astype(float),
                            'Peak Depth (a.u.)', colors_bcs[0], 'd')
-        st.plotly_chart(fa, use_container_width=True)
+        st.plotly_chart(fa, use_container_width=True, config={'editable': True})
         if pa:
             st.markdown(
                 f'<span class="chip">T_c = {pa[1]:.2f} K</span>'
@@ -1460,7 +1459,7 @@ with tab2:
     with col_b:
         fb, pb = bcs_panel(df['Area'].values.astype(float),
                            'Integrated Area (a.u.·THz)', colors_bcs[1], 'a')
-        st.plotly_chart(fb, use_container_width=True)
+        st.plotly_chart(fb, use_container_width=True, config={'editable': True})
         if pb:
             st.markdown(
                 f'<span class="chip">T_c = {pb[1]:.2f} K</span>'
@@ -1482,7 +1481,7 @@ with tab2:
             name='f_r'))
         fc.update_xaxes(title_text='Temperature (K)')
         fc.update_yaxes(title_text='Frequency (THz)')
-        st.plotly_chart(fc, use_container_width=True)
+        st.plotly_chart(fc, use_container_width=True, config={'editable': True})
         zh("声子软化/硬化反映晶格动力学随相变的演化")
     with col_d:
         fd = plotly_fig(320, 'Phonon Linewidth (FWHM) vs Temperature')
@@ -1495,7 +1494,7 @@ with tab2:
             name='FWHM'))
         fd.update_xaxes(title_text='Temperature (K)')
         fd.update_yaxes(title_text='FWHM (THz)', rangemode='tozero')
-        st.plotly_chart(fd, use_container_width=True)
+        st.plotly_chart(fd, use_container_width=True, config={'editable': True})
         zh("线宽展宽反映声子寿命缩短，与散射率增大相关")
 
 # ─────────────────────────────────────────────────
@@ -1641,7 +1640,7 @@ with tab3:
     fig_wf.update_yaxes(title_text='Intensity (arb. u., offset)',
                         showticklabels=False)
     fig_wf.update_layout(showlegend=False)
-    st.plotly_chart(fig_wf, use_container_width=True)
+    st.plotly_chart(fig_wf, use_container_width=True, config={'editable': True})
     zh("颜色：蓝色→低温，红色→高温。偏移量自动以中位峰高为基准，避免曲线重叠。")
 
     # ── Waterfall data export ────────────────────────────
@@ -1781,7 +1780,7 @@ with tab4:
     fig_d.update_yaxes(title_text='ε₂', row=2,col=2)
     fig_d.update_layout(legend=dict(title='Temperature',
                                     orientation='v', x=1.01))
-    st.plotly_chart(fig_d, use_container_width=True)
+    st.plotly_chart(fig_d, use_container_width=True, config={'editable': True})
 
     # low T vs high T comparison
     st.divider()
@@ -1798,7 +1797,7 @@ with tab4:
             mode='lines', name=lbl, line=dict(color=col,width=2.2)))
     fig_cmp.update_xaxes(title_text='Frequency (THz)')
     fig_cmp.update_yaxes(title_text='ε₂ (Imaginary permittivity)')
-    st.plotly_chart(fig_cmp, use_container_width=True)
+    st.plotly_chart(fig_cmp, use_container_width=True, config={'editable': True})
     zh("ε₂ 在声子频率处出现峰值；低温下峰更尖锐，线宽更窄，反映声子寿命增长。")
 
 # ─────────────────────────────────────────────────
@@ -1859,15 +1858,15 @@ with tab5:
         x=np.concatenate([fx, fx[::-1]]),
         y=np.concatenate([sig, np.zeros(len(sig))]),
         fill='toself', fillcolor='rgba(44,110,165,0.12)',
-        line=dict(width=0), name='Integrated area  积分面积',
+        line=dict(width=0), name='Integrated area',
         hoverinfo='skip'))
     # signal
     fig5.add_trace(go.Scatter(x=fx, y=sig, mode='lines',
-        name='Signal  信号',
+        name='Signal',
         line=dict(color='#1a5f8a', width=2.2)))
     # fano fit
     fig5.add_trace(go.Scatter(x=fx, y=fit_s, mode='lines',
-        name='Fano fit  Fano拟合',
+        name='Fano fit',
         line=dict(color='#c0392b', width=2.0, dash='dash')))
     # depth
     fig5.add_shape(type='line', x0=r['peak_x'],x1=r['peak_x'],
@@ -1887,8 +1886,9 @@ with tab5:
     fig5.update_xaxes(title_text='Frequency (THz)')
     fig5.update_yaxes(title_text='ΔAmplitude (a.u., baseline corrected)',
                       rangemode='tozero')
-    fig5.update_layout(legend=dict(x=0.62,y=0.98))
-    st.plotly_chart(fig5, use_container_width=True)
+    fig5.update_layout(legend=dict(yanchor="top", y=1, xanchor="left", x=1.02, bgcolor="rgba(255,255,255,0.8)"))
+    # Make plotly charts editable to allow manual legend dragging
+    st.plotly_chart(fig5, use_container_width=True, config={'editable': True})
 
     # parameter metrics
     pc = st.columns(6)
@@ -1950,7 +1950,7 @@ with tab5:
         ax.set_title(f'T = {r["Temperature_K"]:.0f} K',
                      pad=6, fontsize=matplotlib.rcParams['axes.titlesize'])
         ax.set_ylim(bottom=0)
-        ax.legend(loc='upper right')
+        ax.legend(loc='best')
         format_ax(ax)
         if plot_style == 'Nature':
             panel_label(ax, 'a')

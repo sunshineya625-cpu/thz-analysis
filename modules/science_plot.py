@@ -22,8 +22,8 @@ from matplotlib.ticker import AutoMinorLocator
 # ── Nature-style matplotlib rcParams ─────────────────────────────────────────
 NATURE_RC = {
     # fonts — unified to Arial for cross-platform consistency
-    "font.family":          "sans-serif",
-    "font.sans-serif":      ["Arial", "Helvetica", "DejaVu Sans"],
+    "font.family":          "serif",
+    "font.serif":           ["Times New Roman", "Times", "DejaVu Serif"],
     "font.size":            8,
     "axes.titlesize":       8,
     "axes.labelsize":       8,
@@ -32,9 +32,9 @@ NATURE_RC = {
     "legend.fontsize":      7,
     "legend.title_fontsize":7,
     "mathtext.fontset":     "custom",
-    "mathtext.rm":          "Arial",
-    "mathtext.it":          "Arial:italic",
-    "mathtext.bf":          "Arial:bold",
+    "mathtext.rm":          "Times New Roman",
+    "mathtext.it":          "Times New Roman:italic",
+    "mathtext.bf":          "Times New Roman:bold",
     # axes
     "axes.linewidth":       0.8,
     "axes.spines.top":      False,
@@ -75,8 +75,8 @@ NATURE_RC = {
 # ── Default OriginLab rcParams ────────────────────────────────────────────────
 ORIGIN_RC = {
     # Match Origin's classic Arial 8pt, but with slightly thicker lines
-    "font.family":          "sans-serif",
-    "font.sans-serif":      ["Arial", "Helvetica", "DejaVu Sans"],
+    "font.family":          "serif",
+    "font.serif":           ["Times New Roman", "Times", "DejaVu Serif"],
     "font.size":            9,
     "axes.titlesize":       9,
     "axes.labelsize":       9,
@@ -84,9 +84,9 @@ ORIGIN_RC = {
     "ytick.labelsize":      8,
     "legend.fontsize":      8,
     "mathtext.fontset":     "custom",
-    "mathtext.rm":          "Arial",
-    "mathtext.it":          "Arial:italic",
-    "mathtext.bf":          "Arial:bold",
+    "mathtext.rm":          "Times New Roman",
+    "mathtext.it":          "Times New Roman:italic",
+    "mathtext.bf":          "Times New Roman:bold",
     
     # Origin's thick fully-boxed axes
     "axes.linewidth":       1.5,
@@ -176,8 +176,8 @@ def panel_label(ax, letter, x=-0.18, y=1.05):
 # ── Plotly layout template ────────────────────────────────────────────────────
 PLOTLY_TEMPLATE = {
     "layout": {
-        "font":       {"family": "Arial, Helvetica, sans-serif", "size": 10, "color": "#1a1a1a"},
-        "title":      {"font": {"size": 11, "color": "#1a1a1a"}, "x": 0.5, "xanchor": "center"},
+        "font":       {"family": "Times New Roman, Times, serif", "size": 12, "color": "#1a1a1a"},
+        "title":      {"font": {"size": 14, "color": "#1a1a1a"}, "x": 0.5, "xanchor": "center"},
         "xaxis":      {"showgrid": False, "zeroline": False, "linecolor": "#1a1a1a",
                        "linewidth": 1.0, "ticks": "inside", "ticklen": 5,
                        "mirror": False, "showspikes": False,
