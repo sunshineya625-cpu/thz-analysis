@@ -1,5 +1,5 @@
 """
-THz Spectroscopy Analysis Studio  v4.1
+THz Spectroscopy Analysis Studio  v4.2
 Publication-quality · Bilingual UI (EN primary, ZH annotations)
 Science / Nature journal figure standards
 """
@@ -46,7 +46,7 @@ apply_nature_style()
 # PAGE CONFIG & DESIGN SYSTEM
 # ══════════════════════════════════════════════════════════════
 st.set_page_config(
-    page_title="THz Analysis Studio v4.1",
+    page_title="THz Analysis Studio v4.2",
     page_icon="🔬",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -212,6 +212,12 @@ def sec(text, zh_text=""):
     if zh_text:
         zh(zh_text)
 
+def clear_fano_cache():
+    """Clear downstream Fano fitting results when raw data processing changes."""
+    st.session_state.df = None
+    st.session_state.results = {}
+    st.session_state['_files_changed'] = True
+
 # ══════════════════════════════════════════════════════════════
 # SIDEBAR
 # ══════════════════════════════════════════════════════════════
@@ -232,13 +238,14 @@ with st.sidebar:
         index=0,
         help="Choose which amplitude column to use for analysis.\\n"
              "选择用于分析的振幅列：FD（线性）或 dB（对数）",
+        on_change=clear_fano_cache
     )
     use_db = "dB" in amp_col_choice
-    smooth_w = st.slider("Smoothing window 平滑窗口", 1, 15, 5, 2)
-    rm_bad   = st.checkbox("Remove outliers 去除坏点", True)
+    smooth_w = st.slider("Smoothing window 平滑窗口", 1, 15, 5, 2, on_change=clear_fano_cache)
+    rm_bad   = st.checkbox("Remove outliers 去除坏点", True, on_change=clear_fano_cache)
     use_avg  = st.checkbox("Use averaged data 使用平均后数据", True,
                            help="When checked, spectra at the same temperature are averaged.\n"
-                                "取消勾选后将使用所有原始扫描数据（不平均）。")
+                                "取消勾选后将使用所有原始扫描数据（不平均）。", on_change=clear_fano_cache)
 
     st.markdown('<div class="sidebar-section">📈 BCS Fitting · BCS拟合</div>',
                 unsafe_allow_html=True)
@@ -311,7 +318,7 @@ with st.sidebar:
 # ══════════════════════════════════════════════════════════════
 st.markdown("""
 <div class="masthead">
-  <div class="masthead-title">THz Spectroscopy Analysis Studio <span style="font-size:0.6em;color:#5a7898;">v4.1</span></div>
+  <div class="masthead-title">THz Spectroscopy Analysis Studio <span style="font-size:0.6em;color:#5a7898;">v4.2</span></div>
   <div class="masthead-sub">Temperature-Dependent Phonon Mode Analysis · Fano Resonance · BCS Order Parameter</div>
   <div class="masthead-zh">太赫兹光谱分析工作站 · 声子模式 · Fano共振 · BCS序参量</div>
 </div>
@@ -759,15 +766,16 @@ def _export_all_figs(results, dpi, style='Nature'):
     return buf.read()
 
 
-tab0, tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+tab0, tab_mg, tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "⓪ Averaging",
-    "① ROI & Fitting",
-    "② BCS Analysis",
-    "③ Waterfall",
-    "④ Dielectric",
-    "⑤ Peak Detail",
-    "⑥ Export",
-    "⑦ History",
+    "① Mode Grouping",
+    "② ROI & Fitting",
+    "③ BCS Analysis",
+    "④ Waterfall",
+    "⑤ Dielectric",
+    "⑥ Peak Detail",
+    "⑦ Export",
+    "⑧ History",
 ])
 
 # Use averaged or raw files based on user toggle
@@ -789,6 +797,26 @@ if use_db:
         if 'amp_db' in d:
             d['amp'] = d['amp_db']
 _amp_label = "Amplitude (dB)" if use_db else "Amplitude (A.U.)"
+
+# ── Apply mode group filtering (from Tab ① Mode Grouping) ──
+if st.session_state.get('mode_group_files') is not None:
+    files = st.session_state['mode_group_files']
+    # Also apply dB override to mode-filtered files if needed
+    if use_db:
+        import copy as _mode_cp
+        files = _mode_cp.deepcopy(files)
+        for d in files:
+            if 'amp_db' in d:
+                d['amp'] = d['amp_db']
+    # Auto-set ROI from mode grouping
+    if st.session_state.get('mode_group_roi') is not None:
+        _mode_roi = st.session_state['mode_group_roi']
+        if 'roi_l_val' not in st.session_state or st.session_state.get('_mode_roi_applied') != _mode_roi:
+            st.session_state['roi_l_val'] = _mode_roi[0]
+            st.session_state['roi_r_val'] = _mode_roi[1]
+            st.session_state['roi_l_num'] = _mode_roi[0]
+            st.session_state['roi_r_num'] = _mode_roi[1]
+            st.session_state['_mode_roi_applied'] = _mode_roi
 
 # ─────────────────────────────────────────────────
 # TAB 0 — Averaging
@@ -939,6 +967,239 @@ with tab0:
     else:
         st.info("No temperatures have multiple scans to average.  "
                 "没有温度有多次扫描需要平均。每个温度只有一个文件。")
+# ─────────────────────────────────────────────────
+# TAB MG — Mode Grouping (auto-detect & cluster dips)
+# ─────────────────────────────────────────────────
+with tab_mg:
+    sec("Phonon Mode Grouping",
+        "自动检测各温度下的吸收峰（dip），按频率聚类分组，每组独立分析导出")
+
+    if not files:
+        st.info("Please upload data files first.  请先上传数据。")
+        st.stop()
+
+    # ── Controls ──
+    mg_c1, mg_c2, mg_c3 = st.columns(3)
+    with mg_c1:
+        mg_prominence = st.slider(
+            "Dip prominence threshold / 凹陷显著性",
+            0.001, 0.5, 0.02, 0.005,
+            help="Minimum prominence for a dip to be detected. Larger = only deeper dips.",
+            key="mg_prom")
+    with mg_c2:
+        mg_tolerance = st.slider(
+            "Grouping tolerance (THz) / 聚类容差",
+            0.01, 0.5, 0.08, 0.01,
+            help="Dips within this frequency range are merged into one mode group.",
+            key="mg_tol")
+    with mg_c3:
+        mg_smooth = st.slider(
+            "Detection smoothing / 检测平滑窗口",
+            1, 15, 5, 2, key="mg_smooth")
+
+    # ── Dip detection per scan ──
+    from scipy.signal import find_peaks
+    import copy as _cp
+
+    all_dip_records = []  # list of {filename, temperature, dip_freq, dip_amp}
+
+    for d in files:
+        freq_arr = d['freq'].astype(float)
+        amp_arr  = d['amp'].astype(float)
+
+        # Smooth before detection
+        if mg_smooth > 1 and len(amp_arr) > mg_smooth:
+            try:
+                from scipy.signal import savgol_filter as _sgf
+                sw = mg_smooth if mg_smooth % 2 == 1 else mg_smooth + 1
+                amp_sm = _sgf(amp_arr, sw, 3)
+            except Exception:
+                amp_sm = pd.Series(amp_arr).rolling(mg_smooth, center=True).mean().fillna(method='bfill').fillna(method='ffill').values
+        else:
+            amp_sm = amp_arr
+
+        # Invert to find dips as peaks
+        inverted = -amp_sm + np.max(amp_sm)
+        peaks, props = find_peaks(inverted, width=3,
+                                   prominence=np.max(inverted) * mg_prominence)
+
+        for pk_idx in peaks:
+            all_dip_records.append({
+                'filename':    d['filename'],
+                'temperature': d['temperature'],
+                'dip_freq':    float(freq_arr[pk_idx]),
+                'dip_amp':     float(amp_arr[pk_idx]),
+            })
+
+    if not all_dip_records:
+        st.warning("No dips detected. Try lowering the prominence threshold.  "
+                   "未检测到凹陷，请降低显著性阈值。")
+        st.stop()
+
+    # ── Clustering by frequency proximity ──
+    dip_freqs_all = np.array([r['dip_freq'] for r in all_dip_records])
+    sorted_indices = np.argsort(dip_freqs_all)
+    clusters = []  # list of lists of indices into all_dip_records
+
+    current_cluster = [sorted_indices[0]]
+    for idx in sorted_indices[1:]:
+        if dip_freqs_all[idx] - dip_freqs_all[current_cluster[-1]] <= mg_tolerance:
+            current_cluster.append(idx)
+        else:
+            clusters.append(current_cluster)
+            current_cluster = [idx]
+    clusters.append(current_cluster)
+
+    # Build cluster summary
+    cluster_info = []
+    for ci, members in enumerate(clusters):
+        freqs = dip_freqs_all[members]
+        temps = [all_dip_records[m]['temperature'] for m in members]
+        fnames = [all_dip_records[m]['filename'] for m in members]
+        cluster_info.append({
+            'id':        ci,
+            'center':    float(np.mean(freqs)),
+            'std':       float(np.std(freqs)) if len(freqs) > 1 else 0.0,
+            'count':     len(members),
+            'min_freq':  float(np.min(freqs)),
+            'max_freq':  float(np.max(freqs)),
+            'temps':     temps,
+            'filenames': list(set(fnames)),
+            'members':   members,
+        })
+
+    # ── Summary table ──
+    st.divider()
+    sec("Detected Mode Groups", "检测到的声子模式分组")
+    summary_rows = []
+    for c in cluster_info:
+        summary_rows.append({
+            'Mode':           f"Mode {c['id']+1}",
+            'Center (THz)':   f"{c['center']:.3f}",
+            'Spread (THz)':    f"±{c['std']:.4f}",
+            '# Scans':        c['count'],
+            'T range (K)':    f"{min(c['temps']):.0f} – {max(c['temps']):.0f}",
+            'Freq range':     f"{c['min_freq']:.3f} – {c['max_freq']:.3f}",
+        })
+    st.dataframe(pd.DataFrame(summary_rows), use_container_width=True, hide_index=True)
+
+    # ── Mode selection ──
+    st.divider()
+    sec("Select Active Mode", "选择要分析的模式 → 下游 ROI/BCS/导出 将只处理这组数据")
+
+    mode_options = ["All scans (no grouping) / 全部扫描"]
+    for c in cluster_info:
+        mode_options.append(
+            f"Mode {c['id']+1} @ {c['center']:.3f} THz  ({c['count']} scans)")
+    selected_mode = st.radio("Active mode / 活跃模式", mode_options, key="mg_active",
+                              horizontal=True)
+
+    # Parse selection and store in session
+    if "All scans" in selected_mode:
+        st.session_state['mode_group_files'] = None
+        st.session_state['mode_group_roi']   = None
+        st.info("All scans will be used in downstream tabs.  全部数据将用于后续分析。")
+    else:
+        # Extract mode index
+        mode_idx = int(selected_mode.split("Mode ")[1].split(" @")[0]) - 1
+        c = cluster_info[mode_idx]
+        # Filter to files that have a dip in this cluster
+        mode_filenames = set(c['filenames'])
+        mode_files = [_cp.deepcopy(d) for d in files if d['filename'] in mode_filenames]
+        # Auto ROI: cluster center ± 0.25 THz
+        margin = max(0.15, (c['max_freq'] - c['min_freq']) / 2 + 0.15)
+        flo_global = min(d['freq'].min() for d in mode_files)
+        fhi_global = max(d['freq'].max() for d in mode_files)
+        auto_l = float(np.clip(c['center'] - margin, flo_global, fhi_global))
+        auto_r = float(np.clip(c['center'] + margin, flo_global, fhi_global))
+        st.session_state['mode_group_files'] = mode_files
+        st.session_state['mode_group_roi']   = (auto_l, auto_r)
+        st.success(
+            f"✅ Mode {mode_idx+1} selected: {len(mode_files)} scans near "
+            f"{c['center']:.3f} THz. ROI auto-set to [{auto_l:.3f}, {auto_r:.3f}] THz.  "
+            f"已选模式 {mode_idx+1}，下游标签页已切换为此组数据。")
+
+    # ── Per-cluster visualization & export ──
+    st.divider()
+    sec("Mode Group Charts", "各模式分组图表与数据导出")
+
+    for ci_idx, c in enumerate(cluster_info):
+        with st.expander(
+                f"📊 Mode {c['id']+1} — {c['center']:.3f} THz  "
+                f"({c['count']} scans, {min(c['temps']):.0f}–{max(c['temps']):.0f} K)",
+                expanded=(ci_idx == 0)):
+
+            # Gather files for this cluster
+            cluster_fnames = set(c['filenames'])
+            cluster_files = [d for d in files if d['filename'] in cluster_fnames]
+            n_cf = len(cluster_files)
+            colors_cf = get_colors(n_cf)
+
+            fig_mg = plotly_fig(420,
+                f"Mode {c['id']+1} @ {c['center']:.3f} THz — "
+                f"{n_cf} scans")
+
+            for j, d in enumerate(sorted(cluster_files, key=lambda x: x['temperature'])):
+                fa = d['freq'].astype(float)
+                aa = d['amp'].astype(float)
+                fig_mg.add_trace(go.Scatter(
+                    x=fa, y=aa, mode='lines',
+                    name=f"{d['temperature']:.0f} K",
+                    line=dict(color=colors_cf[j], width=1.2)))
+
+            # Mark the cluster frequency range
+            fig_mg.add_vrect(x0=c['min_freq'] - 0.05, x1=c['max_freq'] + 0.05,
+                             fillcolor="#c0392b", opacity=0.06, line_width=0,
+                             annotation_text=f"{c['center']:.3f} THz",
+                             annotation_position="top left",
+                             annotation_font_size=10)
+
+            fig_mg.update_xaxes(title_text='Frequency (THz)')
+            fig_mg.update_yaxes(title_text=_amp_label)
+            fig_mg.update_layout(legend=dict(yanchor="top", y=1,
+                                              xanchor="left", x=1.02,
+                                              bgcolor="rgba(255,255,255,0.8)"))
+            st.plotly_chart(fig_mg, use_container_width=True,
+                            config={'editable': True})
+
+            # ── Dip detail table for this cluster ──
+            dip_rows = []
+            for m_idx in c['members']:
+                rec = all_dip_records[m_idx]
+                dip_rows.append({
+                    'File': rec['filename'],
+                    'T (K)': f"{rec['temperature']:.1f}",
+                    'Dip Freq (THz)': f"{rec['dip_freq']:.4f}",
+                    'Dip Amp': f"{rec['dip_amp']:.6f}",
+                })
+            st.dataframe(pd.DataFrame(dip_rows), use_container_width=True,
+                         hide_index=True, height=min(200, 35 * len(dip_rows) + 38))
+
+            # ── Per-group Excel export ──
+            export_cols = ['Frequency_THz']
+            export_data = {}
+            for d in sorted(cluster_files, key=lambda x: x['temperature']):
+                col_name = f"{d['temperature']:.0f}K_{d['filename']}"
+                fa = d['freq'].astype(float)
+                aa = d['amp'].astype(float)
+                if 'Frequency_THz' not in export_data:
+                    export_data['Frequency_THz'] = fa
+                export_data[col_name] = np.interp(
+                    export_data['Frequency_THz'], fa, aa)
+
+            export_df = pd.DataFrame(export_data)
+            output_xls = io.BytesIO()
+            with pd.ExcelWriter(output_xls, engine='openpyxl') as xw:
+                export_df.to_excel(xw, index=False,
+                                    sheet_name=f'Mode_{c["id"]+1}_{c["center"]:.2f}THz')
+            st.download_button(
+                f"⬇ Export Mode {c['id']+1} data (.xlsx)",
+                data=output_xls.getvalue(),
+                file_name=f"Mode_{c['id']+1}_{c['center']:.2f}THz.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+                key=f"mg_export_{c['id']}")
+
 # TAB 1 — ROI & Fano fitting
 # ─────────────────────────────────────────────────
 with tab1:
@@ -1381,7 +1642,7 @@ with tab1:
 # ─────────────────────────────────────────────────
 with tab2:
     if st.session_state.df is None:
-        st.info("Complete Fano fitting in Tab ① first.  请先在 ① 完成拟合。")
+        st.info("Complete Fano fitting in Tab ② first.  请先在 ② 完成拟合。")
         st.stop()
 
     sec("BCS Order Parameter Fitting",
@@ -1502,7 +1763,7 @@ with tab2:
 # ─────────────────────────────────────────────────
 with tab3:
     if not st.session_state.results:
-        st.info("Complete Fano fitting in Tab ① first.  请先在 ① 完成拟合。")
+        st.info("Complete Fano fitting in Tab ② first.  请先在 ② 完成拟合。")
         st.stop()
 
     sec("Temperature-Dependent Spectra (Waterfall)",
@@ -1805,7 +2066,7 @@ with tab4:
 # ─────────────────────────────────────────────────
 with tab5:
     if not st.session_state.results:
-        st.info("Complete Fano fitting in Tab ① first.  请先在 ① 完成拟合。")
+        st.info("Complete Fano fitting in Tab ② first.  请先在 ② 完成拟合。")
         st.stop()
 
     sec("Single-Peak Detail View  单峰拟合详情",
