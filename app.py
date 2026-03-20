@@ -972,74 +972,99 @@ with tab0:
 # ─────────────────────────────────────────────────
 with tab_mg:
     sec("Phonon Mode Grouping",
-        "自动检测各温度下的吸收峰（dip），按频率聚类分组，每组独立分析导出")
+        "自动检测吸收峰（dip），按频率聚类分组，每组独立分析导出")
 
     if not files:
         st.info("Please upload data files first.  请先上传数据。")
         st.stop()
 
     # ── Controls ──
-    mg_c1, mg_c2, mg_c3 = st.columns(3)
-    with mg_c1:
+    mg_row1_c1, mg_row1_c2 = st.columns(2)
+    with mg_row1_c1:
+        mg_freq_range = st.slider(
+            "Search frequency range (THz) / 搜索频率范围",
+            0.1, 5.0, (0.5, 2.0), 0.05,
+            help="Only look for dips within this frequency range. "
+                 "Ignore noisy regions outside.",
+            key="mg_freq_range")
+    with mg_row1_c2:
+        mg_max_groups = st.slider(
+            "Max groups / 最多分组数",
+            1, 8, 4, 1,
+            help="Keep only the N most prominent mode groups.",
+            key="mg_max_groups")
+
+    mg_row2_c1, mg_row2_c2, mg_row2_c3 = st.columns(3)
+    with mg_row2_c1:
         mg_prominence = st.slider(
-            "Dip prominence threshold / 凹陷显著性",
+            "Dip prominence / 凹陷显著性",
             0.001, 0.5, 0.02, 0.005,
-            help="Minimum prominence for a dip to be detected. Larger = only deeper dips.",
+            help="Minimum relative prominence. Larger = only deeper dips.",
             key="mg_prom")
-    with mg_c2:
+    with mg_row2_c2:
         mg_tolerance = st.slider(
             "Grouping tolerance (THz) / 聚类容差",
             0.01, 0.5, 0.08, 0.01,
-            help="Dips within this frequency range are merged into one mode group.",
+            help="Dips within this range are merged into one group.",
             key="mg_tol")
-    with mg_c3:
+    with mg_row2_c3:
         mg_smooth = st.slider(
-            "Detection smoothing / 检测平滑窗口",
+            "Detection smoothing / 检测平滑",
             1, 15, 5, 2, key="mg_smooth")
 
-    # ── Dip detection per scan ──
+    # ── Dip detection per scan (within freq range only) ──
     from scipy.signal import find_peaks
     import copy as _cp
 
-    all_dip_records = []  # list of {filename, temperature, dip_freq, dip_amp}
+    f_search_lo, f_search_hi = mg_freq_range
+    all_dip_records = []
 
     for d in files:
         freq_arr = d['freq'].astype(float)
         amp_arr  = d['amp'].astype(float)
 
-        # Smooth before detection
-        if mg_smooth > 1 and len(amp_arr) > mg_smooth:
+        # Restrict to search range
+        search_mask = (freq_arr >= f_search_lo) & (freq_arr <= f_search_hi)
+        freq_s = freq_arr[search_mask]
+        amp_s  = amp_arr[search_mask]
+        if len(freq_s) < 10:
+            continue
+
+        # Smooth
+        if mg_smooth > 1 and len(amp_s) > mg_smooth:
             try:
                 from scipy.signal import savgol_filter as _sgf
                 sw = mg_smooth if mg_smooth % 2 == 1 else mg_smooth + 1
-                amp_sm = _sgf(amp_arr, sw, 3)
+                amp_sm = _sgf(amp_s, sw, 3)
             except Exception:
-                amp_sm = pd.Series(amp_arr).rolling(mg_smooth, center=True).mean().fillna(method='bfill').fillna(method='ffill').values
+                amp_sm = pd.Series(amp_s).rolling(mg_smooth, center=True).mean().bfill().ffill().values
         else:
-            amp_sm = amp_arr
+            amp_sm = amp_s
 
-        # Invert to find dips as peaks
+        # Invert to find dips
         inverted = -amp_sm + np.max(amp_sm)
         peaks, props = find_peaks(inverted, width=3,
                                    prominence=np.max(inverted) * mg_prominence)
 
-        for pk_idx in peaks:
+        for pi, pk_idx in enumerate(peaks):
             all_dip_records.append({
                 'filename':    d['filename'],
                 'temperature': d['temperature'],
-                'dip_freq':    float(freq_arr[pk_idx]),
-                'dip_amp':     float(amp_arr[pk_idx]),
+                'dip_freq':    float(freq_s[pk_idx]),
+                'dip_amp':     float(amp_s[pk_idx]),
+                'prominence':  float(props['prominences'][pi]),
             })
 
     if not all_dip_records:
-        st.warning("No dips detected. Try lowering the prominence threshold.  "
-                   "未检测到凹陷，请降低显著性阈值。")
+        st.warning("No dips detected in the search range. "
+                   "Try widening the frequency range or lowering prominence.  "
+                   "搜索范围内未检测到凹陷。")
         st.stop()
 
-    # ── Clustering by frequency proximity ──
+    # ── Clustering ──
     dip_freqs_all = np.array([r['dip_freq'] for r in all_dip_records])
     sorted_indices = np.argsort(dip_freqs_all)
-    clusters = []  # list of lists of indices into all_dip_records
+    clusters = []
 
     current_cluster = [sorted_indices[0]]
     for idx in sorted_indices[1:]:
@@ -1050,12 +1075,12 @@ with tab_mg:
             current_cluster = [idx]
     clusters.append(current_cluster)
 
-    # Build cluster summary
+    # Build cluster info and sort by total prominence (most significant first)
     cluster_info = []
     for ci, members in enumerate(clusters):
         freqs = dip_freqs_all[members]
         temps = [all_dip_records[m]['temperature'] for m in members]
-        fnames = [all_dip_records[m]['filename'] for m in members]
+        total_prom = sum(all_dip_records[m]['prominence'] for m in members)
         cluster_info.append({
             'id':        ci,
             'center':    float(np.mean(freqs)),
@@ -1064,141 +1089,153 @@ with tab_mg:
             'min_freq':  float(np.min(freqs)),
             'max_freq':  float(np.max(freqs)),
             'temps':     temps,
-            'filenames': list(set(fnames)),
+            'total_prom': total_prom,
             'members':   members,
         })
 
+    # Keep only top N groups by prominence
+    cluster_info.sort(key=lambda x: x['total_prom'], reverse=True)
+    cluster_info = cluster_info[:mg_max_groups]
+    cluster_info.sort(key=lambda x: x['center'])
+    for i, c in enumerate(cluster_info):
+        c['id'] = i
+
     # ── Summary table ──
     st.divider()
-    sec("Detected Mode Groups", "检测到的声子模式分组")
+    sec("Detected Mode Groups",
+        f"检测到 {len(cluster_info)} 个声子模式"
+        f"（频率范围 {f_search_lo}–{f_search_hi} THz）")
     summary_rows = []
     for c in cluster_info:
         summary_rows.append({
             'Mode':           f"Mode {c['id']+1}",
             'Center (THz)':   f"{c['center']:.3f}",
-            'Spread (THz)':    f"±{c['std']:.4f}",
-            '# Scans':        c['count'],
+            'Spread':         f"±{c['std']:.4f}",
+            '# Dips found':   c['count'],
             'T range (K)':    f"{min(c['temps']):.0f} – {max(c['temps']):.0f}",
-            'Freq range':     f"{c['min_freq']:.3f} – {c['max_freq']:.3f}",
         })
-    st.dataframe(pd.DataFrame(summary_rows), use_container_width=True, hide_index=True)
+    st.dataframe(pd.DataFrame(summary_rows), use_container_width=True,
+                 hide_index=True)
 
-    # ── Mode selection ──
+    # ── Mode selection for downstream ──
     st.divider()
-    sec("Select Active Mode", "选择要分析的模式 → 下游 ROI/BCS/导出 将只处理这组数据")
+    sec("Select Active Mode",
+        "选择模式 → 下游 ROI/BCS 将自动对准该频率区间（所有扫描都保留）")
 
     mode_options = ["All scans (no grouping) / 全部扫描"]
     for c in cluster_info:
-        mode_options.append(
-            f"Mode {c['id']+1} @ {c['center']:.3f} THz  ({c['count']} scans)")
-    selected_mode = st.radio("Active mode / 活跃模式", mode_options, key="mg_active",
-                              horizontal=True)
+        mode_options.append(f"Mode {c['id']+1} @ {c['center']:.3f} THz")
+    selected_mode = st.radio("Active mode / 活跃模式", mode_options,
+                              key="mg_active", horizontal=True)
 
-    # Parse selection and store in session
     if "All scans" in selected_mode:
         st.session_state['mode_group_files'] = None
         st.session_state['mode_group_roi']   = None
-        st.info("All scans will be used in downstream tabs.  全部数据将用于后续分析。")
     else:
-        # Extract mode index
         mode_idx = int(selected_mode.split("Mode ")[1].split(" @")[0]) - 1
         c = cluster_info[mode_idx]
-        # Filter to files that have a dip in this cluster
-        mode_filenames = set(c['filenames'])
-        mode_files = [_cp.deepcopy(d) for d in files if d['filename'] in mode_filenames]
-        # Auto ROI: cluster center ± 0.25 THz
+        # ALL files go downstream — just auto-set ROI
+        mode_files = [_cp.deepcopy(d) for d in files]
         margin = max(0.15, (c['max_freq'] - c['min_freq']) / 2 + 0.15)
-        flo_global = min(d['freq'].min() for d in mode_files)
-        fhi_global = max(d['freq'].max() for d in mode_files)
-        auto_l = float(np.clip(c['center'] - margin, flo_global, fhi_global))
-        auto_r = float(np.clip(c['center'] + margin, flo_global, fhi_global))
+        flo_g = min(dd['freq'].min() for dd in mode_files)
+        fhi_g = max(dd['freq'].max() for dd in mode_files)
+        auto_l = float(np.clip(c['center'] - margin, flo_g, fhi_g))
+        auto_r = float(np.clip(c['center'] + margin, flo_g, fhi_g))
         st.session_state['mode_group_files'] = mode_files
         st.session_state['mode_group_roi']   = (auto_l, auto_r)
         st.success(
-            f"✅ Mode {mode_idx+1} selected: {len(mode_files)} scans near "
-            f"{c['center']:.3f} THz. ROI auto-set to [{auto_l:.3f}, {auto_r:.3f}] THz.  "
-            f"已选模式 {mode_idx+1}，下游标签页已切换为此组数据。")
+            f"✅ Mode {mode_idx+1}: ROI → [{auto_l:.3f}, {auto_r:.3f}] THz  "
+            f"（{len(mode_files)} scans）")
 
-    # ── Per-cluster visualization & export ──
+    # ── Per-cluster charts & export (ALL scans, zoomed) ──
     st.divider()
-    sec("Mode Group Charts", "各模式分组图表与数据导出")
+    sec("Mode Group Charts",
+        "每组图表包含所有扫描，自动放大到该模式的频率区间")
+
+    n_groups = len(cluster_info)
+    if n_groups <= 2:
+        _mg_cols = st.columns(n_groups)
+    else:
+        _mg_cols = None
 
     for ci_idx, c in enumerate(cluster_info):
-        with st.expander(
-                f"📊 Mode {c['id']+1} — {c['center']:.3f} THz  "
-                f"({c['count']} scans, {min(c['temps']):.0f}–{max(c['temps']):.0f} K)",
-                expanded=(ci_idx == 0)):
+        if _mg_cols is not None:
+            _mg_container = _mg_cols[ci_idx]
+        else:
+            if ci_idx % 2 == 0:
+                _mg_row = st.columns(2)
+            _mg_container = _mg_row[ci_idx % 2]
 
-            # Gather files for this cluster
-            cluster_fnames = set(c['filenames'])
-            cluster_files = [d for d in files if d['filename'] in cluster_fnames]
-            n_cf = len(cluster_files)
-            colors_cf = get_colors(n_cf)
+        with _mg_container:
+            st.markdown(f"**Mode {c['id']+1} — {c['center']:.3f} THz**")
 
-            fig_mg = plotly_fig(420,
-                f"Mode {c['id']+1} @ {c['center']:.3f} THz — "
-                f"{n_cf} scans")
+            zoom_margin = max(0.3, (c['max_freq'] - c['min_freq']) / 2 + 0.3)
+            zoom_lo = c['center'] - zoom_margin
+            zoom_hi = c['center'] + zoom_margin
 
-            for j, d in enumerate(sorted(cluster_files, key=lambda x: x['temperature'])):
+            n_f = len(files)
+            colors_f = get_colors(n_f)
+            fig_mg = plotly_fig(320,
+                f"Mode {c['id']+1} @ {c['center']:.3f} THz")
+
+            for j, d in enumerate(
+                    sorted(files, key=lambda x: x['temperature'])):
                 fa = d['freq'].astype(float)
                 aa = d['amp'].astype(float)
+                zmask = (fa >= zoom_lo) & (fa <= zoom_hi)
+                if zmask.sum() < 2:
+                    continue
                 fig_mg.add_trace(go.Scatter(
-                    x=fa, y=aa, mode='lines',
+                    x=fa[zmask], y=aa[zmask], mode='lines',
                     name=f"{d['temperature']:.0f} K",
-                    line=dict(color=colors_cf[j], width=1.2)))
+                    line=dict(color=colors_f[j], width=1.2)))
 
-            # Mark the cluster frequency range
-            fig_mg.add_vrect(x0=c['min_freq'] - 0.05, x1=c['max_freq'] + 0.05,
-                             fillcolor="#c0392b", opacity=0.06, line_width=0,
-                             annotation_text=f"{c['center']:.3f} THz",
-                             annotation_position="top left",
-                             annotation_font_size=10)
-
-            fig_mg.update_xaxes(title_text='Frequency (THz)')
+            fig_mg.add_vrect(x0=c['min_freq'] - 0.02,
+                             x1=c['max_freq'] + 0.02,
+                             fillcolor="#c0392b", opacity=0.08,
+                             line_width=0)
+            fig_mg.update_xaxes(title_text='Frequency (THz)',
+                                range=[zoom_lo, zoom_hi])
             fig_mg.update_yaxes(title_text=_amp_label)
-            fig_mg.update_layout(legend=dict(yanchor="top", y=1,
-                                              xanchor="left", x=1.02,
-                                              bgcolor="rgba(255,255,255,0.8)"))
+            fig_mg.update_layout(
+                legend=dict(yanchor="top", y=1, xanchor="left", x=1.02,
+                            bgcolor="rgba(255,255,255,0.8)"),
+                margin=dict(l=40, r=10, t=40, b=40))
             st.plotly_chart(fig_mg, use_container_width=True,
                             config={'editable': True})
 
-            # ── Dip detail table for this cluster ──
-            dip_rows = []
-            for m_idx in c['members']:
-                rec = all_dip_records[m_idx]
-                dip_rows.append({
-                    'File': rec['filename'],
-                    'T (K)': f"{rec['temperature']:.1f}",
-                    'Dip Freq (THz)': f"{rec['dip_freq']:.4f}",
-                    'Dip Amp': f"{rec['dip_amp']:.6f}",
-                })
-            st.dataframe(pd.DataFrame(dip_rows), use_container_width=True,
-                         hide_index=True, height=min(200, 35 * len(dip_rows) + 38))
-
-            # ── Per-group Excel export ──
-            export_cols = ['Frequency_THz']
+            # Per-group Excel export
             export_data = {}
-            for d in sorted(cluster_files, key=lambda x: x['temperature']):
-                col_name = f"{d['temperature']:.0f}K_{d['filename']}"
+            for d in sorted(files, key=lambda x: x['temperature']):
                 fa = d['freq'].astype(float)
                 aa = d['amp'].astype(float)
+                zmask = (fa >= zoom_lo) & (fa <= zoom_hi)
+                if zmask.sum() < 2:
+                    continue
+                col_name = f"{d['temperature']:.0f}K"
                 if 'Frequency_THz' not in export_data:
-                    export_data['Frequency_THz'] = fa
+                    export_data['Frequency_THz'] = fa[zmask]
                 export_data[col_name] = np.interp(
-                    export_data['Frequency_THz'], fa, aa)
+                    export_data['Frequency_THz'], fa[zmask], aa[zmask])
 
-            export_df = pd.DataFrame(export_data)
-            output_xls = io.BytesIO()
-            with pd.ExcelWriter(output_xls, engine='openpyxl') as xw:
-                export_df.to_excel(xw, index=False,
-                                    sheet_name=f'Mode_{c["id"]+1}_{c["center"]:.2f}THz')
-            st.download_button(
-                f"⬇ Export Mode {c['id']+1} data (.xlsx)",
-                data=output_xls.getvalue(),
-                file_name=f"Mode_{c['id']+1}_{c['center']:.2f}THz.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True,
-                key=f"mg_export_{c['id']}")
+            if export_data:
+                export_df = pd.DataFrame(export_data)
+                output_xls = io.BytesIO()
+                with pd.ExcelWriter(output_xls, engine='openpyxl') as xw:
+                    export_df.to_excel(xw, index=False,
+                        sheet_name=f'Mode{c["id"]+1}_{c["center"]:.2f}THz')
+                st.download_button(
+                    f"⬇ Export Mode {c['id']+1} (.xlsx)",
+                    data=output_xls.getvalue(),
+                    file_name=f"Mode_{c['id']+1}_{c['center']:.2f}THz.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument"
+                         ".spreadsheetml.sheet",
+                    use_container_width=True,
+                    key=f"mg_export_{c['id']}")
+
+
+
+
 
 # TAB 1 — ROI & Fano fitting
 # ─────────────────────────────────────────────────
